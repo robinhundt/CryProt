@@ -1,12 +1,10 @@
 [workspace]
+members = ["seec-net", "seec-ot"]
 resolver = "2"
-members = [
-    "seec-net",
-    "seec-ot"
-]
 
 [workspace.dependencies]
 anyhow = "1.0.86"
+futures = "0.3.30"
 pin-project-lite = "0.2.14"
 serde = "1.0.203"
 thiserror = "2.0.9"

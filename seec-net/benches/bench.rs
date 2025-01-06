@@ -1,10 +1,14 @@
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Instant,
+};
+
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use seec_net::testing::local_conn;
-use seec_net::Id;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::join;
+use seec_net::{testing::local_conn, Id};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    join,
+};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -89,7 +93,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut buf2 = buf.clone();
                     let now = Instant::now();
                     for _ in 0..iters {
-                        // some move shenanigans necessary to use tokio::spawn (requiring 'static), but not cloning all the time
+                        // some move shenanigans necessary to use tokio::spawn (requiring 'static),
+                        // but not cloning all the time
                         let t1 = tokio::spawn(async move {
                             snd_s.write_all(&buf1).await.unwrap();
                             (snd_s, buf1)
@@ -142,7 +147,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut buf1 = buf.clone();
                     let now = Instant::now();
                     for _ in 0..iters {
-                        // some move shenanigans necessary to use tokio::spawn (requiring 'static), but not cloning all the time
+                        // some move shenanigans necessary to use tokio::spawn (requiring 'static),
+                        // but not cloning all the time
                         let t1 = tokio::spawn(async move {
                             snd_s.write_all(&buf1).await.unwrap();
                             (snd_s, buf1)
@@ -188,7 +194,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut buf2 = buf.clone();
                     let now = Instant::now();
                     for _ in 0..iters {
-                        // some move shenanigans necessary to use tokio::spawn (requiring 'static), but not cloning all the time
+                        // some move shenanigans necessary to use tokio::spawn (requiring 'static),
+                        // but not cloning all the time
                         let t1 = tokio::spawn(async move {
                             snd_s1.write_all(&buf1).await.unwrap();
                             (snd_s1, buf1)

@@ -1,10 +1,10 @@
-use crate::Connection;
-use anyhow::Context;
-use s2n_quic::client::Connect;
-use s2n_quic::provider::limits::Limits;
-use s2n_quic::{Client, Server};
 use std::net::{Ipv4Addr, SocketAddr};
+
+use anyhow::Context;
+use s2n_quic::{client::Connect, provider::limits::Limits, Client, Server};
 use tokio::join;
+
+use crate::Connection;
 
 /// NOTE: this certificate is to be used for demonstration purposes only!
 static CERT_PEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/cert.pem"));

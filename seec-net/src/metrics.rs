@@ -1,9 +1,10 @@
 //! [`tracing_subscriber::Layer`] for structured communication metrics
 //!
-//! The [`CommLayer`] is a [`tracing_subscriber::Layer`] which records numbers of bytes read and
-//! written. Metrics are collected by [`instrumenting`](`tracing::instrument`) spans with the
-//! `seec_metrics` target and a phase. From within these spans, events with the same target can be emitted
-//! to track the number of bytes read/written.
+//! The [`CommLayer`] is a [`tracing_subscriber::Layer`] which records numbers
+//! of bytes read and written. Metrics are collected by
+//! [`instrumenting`](`tracing::instrument`) spans with the `seec_metrics`
+//! target and a phase. From within these spans, events with the same target can
+//! be emitted to track the number of bytes read/written.
 //!
 //! ```
 //! use tracing::{event, instrument, Level};
@@ -19,20 +20,25 @@
 //!     // Will be recorded in the sub phase "Setup" of the online phase
 //!     event!(target: "seec_metrics", Level::TRACE, bytes_written = 10);
 //! }
-//!
 //! ```
+use std::{
+    collections::{btree_map::Entry, BTreeMap},
+    fmt::Debug,
+    mem,
+    ops::AddAssign,
+    sync::{Arc, Mutex},
+};
+
 use serde::{Deserialize, Serialize};
-use std::collections::btree_map::Entry;
-use std::collections::BTreeMap;
-use std::fmt::Debug;
-use std::mem;
-use std::ops::AddAssign;
-use std::sync::{Arc, Mutex};
-use tracing::field::{Field, Visit};
-use tracing::span::{Attributes, Id};
-use tracing::{warn, Level};
-use tracing_subscriber::filter::{Filtered, Targets};
-use tracing_subscriber::layer::{Context, Layer};
+use tracing::{
+    field::{Field, Visit},
+    span::{Attributes, Id},
+    warn, Level,
+};
+use tracing_subscriber::{
+    filter::{Filtered, Targets},
+    layer::{Context, Layer},
+};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 /// Communication metrics for a phase and its sub phases.
@@ -85,8 +91,8 @@ impl CommLayerData {
 
     /// Resets the root `SubCommData` and returns it.
     ///
-    /// Do not use this method while an instrumented `target = seec_metrics` span is active,
-    /// as this will result in inconsistent data.
+    /// Do not use this method while an instrumented `target = seec_metrics`
+    /// span is active, as this will result in inconsistent data.
     pub fn reset(&self) -> SubCommData {
         let mut comm_data = self.comm_data.lock().expect("lock poisoned");
         mem::take(&mut *comm_data)
@@ -116,8 +122,8 @@ where
             );
             return;
         };
-        // Check that we only have one field per event, otherwise the CommEventVisitor will
-        // only record on of them
+        // Check that we only have one field per event, otherwise the CommEventVisitor
+        // will only record on of them
         let field_cnt = event
             .fields()
             .filter(|field| field.name() == "bytes_read" || field.name() == "bytes_written")
@@ -298,11 +304,9 @@ impl Visit for CommEventVisitor {
 mod tests {
     use std::time::Duration;
 
-    use tokio::time::sleep;
-    use tokio::{self, join};
+    use tokio::{self, join, time::sleep};
     use tracing::{event, instrument, Instrument, Level};
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::Registry;
+    use tracing_subscriber::{layer::SubscriberExt, Registry};
 
     use crate::metrics::new_comm_layer;
 
@@ -370,7 +374,9 @@ mod tests {
         async fn parallel_operation(id: u32) {
             // If communication of a sub-phase happens in a spawned task, the future needs
             // to be instrumented with the current span to preserve hierarchy
-            tokio::spawn(sub_operation(id).in_current_span()).await.unwrap();
+            tokio::spawn(sub_operation(id).in_current_span())
+                .await
+                .unwrap();
         }
 
         #[instrument(target = "seec_metrics", fields(phase = "SubPhase"))]

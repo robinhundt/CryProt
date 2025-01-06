@@ -1,22 +1,31 @@
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    future::Future,
+    io::{Error, IoSlice},
+    pin::Pin,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
+};
+
 use pin_project_lite::pin_project;
-use s2n_quic::connection::{Handle, StreamAcceptor as QuicStreamAcceptor};
-use s2n_quic::stream::ReceiveStream as QuicRecvStream;
-use s2n_quic::stream::SendStream as QuicSendStream;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
-use std::future::Future;
-use std::io::{Error, IoSlice};
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
-use tokio::sync::{mpsc, oneshot};
-use tokio::{io, select};
-use tokio_serde::formats::{Bincode, SymmetricalBincode};
-use tokio_serde::SymmetricallyFramed;
+use s2n_quic::{
+    connection::{Handle, StreamAcceptor as QuicStreamAcceptor},
+    stream::{ReceiveStream as QuicRecvStream, SendStream as QuicSendStream},
+};
+use serde::{de::DeserializeOwned, Serialize};
+use tokio::{
+    io,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
+    select,
+    sync::{mpsc, oneshot},
+};
+use tokio_serde::{
+    formats::{Bincode, SymmetricalBincode},
+    SymmetricallyFramed,
+};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::{debug, error, event, Level};
 
@@ -58,9 +67,10 @@ pub struct StreamManager {
 
 /// Used to create grouped sub-streams.
 ///
-/// Connections can have sub-connections. Streams created via [`Connection::byte_stream`] and
-/// [`Connection::stream`] are tied to their connection. Streams created with the same [`Id`]
-/// but for different connections will not conflict with each other.
+/// Connections can have sub-connections. Streams created via
+/// [`Connection::byte_stream`] and [`Connection::stream`] are tied to their
+/// connection. Streams created with the same [`Id`] but for different
+/// connections will not conflict with each other.
 pub struct Connection {
     cids: Vec<ConnectionId>,
     next_cid: Arc<AtomicU32>,
@@ -131,8 +141,8 @@ impl StreamManager {
     }
 
     /// Start the StreamManager to accept streams.
-    /// 
-    /// This method needs to be continually polled to establish new streams. 
+    ///
+    /// This method needs to be continually polled to establish new streams.
     pub async fn start(mut self) {
         loop {
             select! {
@@ -211,7 +221,7 @@ pub enum ConnectionError {
     #[error("io error during stream establishment")]
     IoError(#[source] io::Error),
     #[error("StreamManager is dropped and not accepting connections")]
-    StreamManagerDropped
+    StreamManagerDropped,
 }
 
 impl Connection {
@@ -228,9 +238,9 @@ impl Connection {
     }
 
     /// Create a sub-connection. The n'th call to sub_connection
-    /// is paired with the n'th call to `sub_connection` on the corresponding [`Connection`] of the
-    /// other party. Creating a sub-connection results in no immediate communication and is
-    /// a fast synchronous operation.
+    /// is paired with the n'th call to `sub_connection` on the corresponding
+    /// [`Connection`] of the other party. Creating a sub-connection results
+    /// in no immediate communication and is a fast synchronous operation.
     pub fn sub_connection(&mut self) -> Self {
         let cid = self.next_cid.fetch_add(1, Ordering::Relaxed);
         let mut cids = self.cids.clone();
@@ -244,13 +254,23 @@ impl Connection {
     }
 
     /// Establish a byte stream over this connection with the provided Id.
-    pub async fn byte_stream(&mut self, id: Id) -> Result<(SendStreamBytes, ReceiveStreamBytes), ConnectionError> {
+    pub async fn byte_stream(
+        &mut self,
+        id: Id,
+    ) -> Result<(SendStreamBytes, ReceiveStreamBytes), ConnectionError> {
         let uid = UniqueId::new(self.cids.clone(), id);
-        let mut snd = self.handle.open_send_stream().await.map_err(ConnectionError::OpenStream)?;
+        let mut snd = self
+            .handle
+            .open_send_stream()
+            .await
+            .map_err(ConnectionError::OpenStream)?;
         let uid_bytes = uid.to_bytes();
         snd.write_all(&(uid_bytes.len() as u16).to_be_bytes())
-            .await.map_err(ConnectionError::IoError)?;
-        snd.write_all(&uid_bytes).await.map_err(ConnectionError::IoError)?;
+            .await
+            .map_err(ConnectionError::IoError)?;
+        snd.write_all(&uid_bytes)
+            .await
+            .map_err(ConnectionError::IoError)?;
         event!(target: "seec_metrics", Level::TRACE, bytes_written = 2 + uid_bytes.len());
         let (stream_return, stream_recv) = oneshot::channel();
         self.cmd
@@ -310,7 +330,7 @@ pub enum ParseUniqueIdError {
     #[error("insufficient data to parse UniqueId")]
     InsufficientData,
     #[error("unused remaining data. Remaining bytes: {0}")]
-    RemainingData(usize)
+    RemainingData(usize),
 }
 
 impl UniqueId {
@@ -327,12 +347,15 @@ impl UniqueId {
 
         let mut chunks_iter = bytes.chunks_exact(4);
         // 4 bytes in u32
-        let cids = chunks_iter.by_ref()
+        let cids = chunks_iter
+            .by_ref()
             .map(|chunk| ConnectionId::from_bytes(chunk.try_into().unwrap()))
             .collect();
 
         if !chunks_iter.remainder().is_empty() {
-            return Err(ParseUniqueIdError::RemainingData(chunks_iter.remainder().len()));
+            return Err(ParseUniqueIdError::RemainingData(
+                chunks_iter.remainder().len(),
+            ));
         }
 
         Ok(Self { cids, id })
@@ -390,8 +413,8 @@ fn trace_poll(p: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
     p
 }
 
-// Implement AsyncRead for ReceiveStream to poll the oneshot Receiver first if there is not
-// already a channel.
+// Implement AsyncRead for ReceiveStream to poll the oneshot Receiver first if
+// there is not already a channel.
 impl AsyncRead for ReceiveStreamBytes {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -429,11 +452,11 @@ impl AsyncRead for ReceiveStreamBytes {
 
 #[cfg(test)]
 mod tests {
-    use crate::testing::local_conn;
-    use crate::Id;
     use anyhow::{Context, Result};
     use futures::{SinkExt, StreamExt};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use crate::{testing::local_conn, Id};
 
     #[tokio::test]
     async fn create_local_conn() -> Result<()> {
@@ -461,8 +484,8 @@ mod tests {
         let s_send_buf = b"hello there";
         s_send.write_all(s_send_buf).await?;
         let mut s_recv_buf = [0; 2];
-        // By already spawning the read task before the client calls c._new_byte_stream we
-        // check that the switch from channel to s2n stream works
+        // By already spawning the read task before the client calls c._new_byte_stream
+        // we check that the switch from channel to s2n stream works
         let jh = tokio::spawn(async move {
             s_recv.read_exact(&mut s_recv_buf).await.unwrap();
             s_recv_buf

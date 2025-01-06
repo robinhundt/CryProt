@@ -2,7 +2,7 @@
 //!
 //! The [`CommLayer`] is a [`tracing_subscriber::Layer`] which records numbers of bytes read and
 //! written. Metrics are collected by [`instrumenting`](`tracing::instrument`) spans with the
-//! `seec_metrics` and a phase. From within these spans, events with the same target can be emitted
+//! `seec_metrics` target and a phase. From within these spans, events with the same target can be emitted
 //! to track the number of bytes read/written.
 //!
 //! ```
@@ -22,6 +22,7 @@
 //!
 //! ```
 use serde::{Deserialize, Serialize};
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::mem;
@@ -61,6 +62,7 @@ pub type CommLayer<S> = Filtered<CommLayerData, Targets, S>;
 #[derive(Clone, Debug, Default)]
 /// The `CommLayerData` has shared ownership of the root [`SubCommData`].
 pub struct CommLayerData {
+    // TOOD use Atomics in SubCommData to not need lock, maybe?
     comm_data: Arc<Mutex<SubCommData>>,
 }
 
@@ -114,6 +116,16 @@ where
             );
             return;
         };
+        // Check that we only have one field per event, otherwise the CommEventVisitor will
+        // only record on of them
+        let field_cnt = event
+            .fields()
+            .filter(|field| field.name() == "bytes_read" || field.name() == "bytes_written")
+            .count();
+        if field_cnt >= 2 {
+            warn!("Use individual events to record bytes_read and bytes_written");
+            return;
+        }
         let mut vis = CommEventVisitor(None);
         event.record(&mut vis);
         if let Some(event) = vis.0 {
@@ -170,10 +182,13 @@ fn merge(from: CommData, into: &mut CommData) {
     into.read += from.read;
     into.write += from.write;
     for (phase, from_sub_comm) in from.sub_comm_data.0.into_iter() {
-        if let Some(into_sub_comm) = into.sub_comm_data.0.get_mut(&phase) {
-            merge(from_sub_comm, into_sub_comm);
-        } else {
-            into.sub_comm_data.0.insert(phase.clone(), from_sub_comm);
+        match into.sub_comm_data.0.entry(phase) {
+            Entry::Vacant(entry) => {
+                entry.insert(from_sub_comm);
+            }
+            Entry::Occupied(mut entry) => {
+                merge(from_sub_comm, entry.get_mut());
+            }
         }
     }
 }
@@ -192,8 +207,8 @@ impl SubCommData {
 
 impl AddAssign for Counter {
     fn add_assign(&mut self, rhs: Self) {
-        self.bytes += rhs.bytes;
-        self.bytes_with_sub_comm += rhs.bytes_with_sub_comm;
+        self.bytes += dbg!(rhs.bytes);
+        self.bytes_with_sub_comm += dbg!(rhs.bytes_with_sub_comm);
     }
 }
 
@@ -233,6 +248,7 @@ enum CommEvent {
     Read(u64),
     Write(u64),
 }
+
 struct CommEventVisitor(Option<CommEvent>);
 
 impl CommEventVisitor {
@@ -241,7 +257,7 @@ impl CommEventVisitor {
         T: TryInto<u64>,
         T::Error: Debug,
     {
-        let name = field.name();
+        let name = dbg!(field.name());
         if name != "bytes_written" && name != "bytes_read" {
             return;
         }
@@ -255,6 +271,7 @@ impl CommEventVisitor {
         }
     }
 }
+
 impl Visit for CommEventVisitor {
     fn record_i64(&mut self, field: &Field, value: i64) {
         self.record(field, value);
@@ -268,6 +285,153 @@ impl Visit for CommEventVisitor {
     fn record_u128(&mut self, field: &Field, value: u128) {
         self.record(field, value)
     }
+    fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+        warn!(
+            "seec_metrics event with field which is not an integer. {}: {:?}",
+            field.name(),
+            value
+        )
+    }
+}
 
-    fn record_debug(&mut self, _field: &Field, _value: &dyn Debug) {}
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::time::sleep;
+    use tokio::{self, join};
+    use tracing::{event, instrument, Instrument, Level};
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::Registry;
+
+    use crate::metrics::new_comm_layer;
+
+    #[tokio::test]
+    async fn test_communication_metrics() {
+        #[instrument(target = "seec_metrics", fields(phase = "TopLevel"))]
+        async fn top_level_operation() {
+            // Simulate some direct communication
+            event!(target: "seec_metrics", Level::TRACE, bytes_read = 100);
+            event!(target: "seec_metrics", Level::TRACE, bytes_written = 200);
+
+            // Call sub-operation
+            sub_operation().await;
+        }
+
+        #[instrument(target = "seec_metrics", fields(phase = "SubOperation"))]
+        async fn sub_operation() {
+            // Simulate some communication in the sub-operation
+            event!(target: "seec_metrics", Level::TRACE, bytes_read = 50);
+            event!(target: "seec_metrics", Level::TRACE, bytes_written = 100);
+        }
+
+        // Set up the metrics layer
+        let (comm_layer, comm_data) = new_comm_layer();
+        let subscriber = Registry::default().with(comm_layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // Run instrumented functions
+        top_level_operation().await;
+
+        // Verify metrics
+        let metrics = comm_data.comm_data();
+
+        // Check top level metrics
+        let top_phase = metrics
+            .get("TopLevel")
+            .expect("TopLevel phase should exist");
+        assert_eq!(top_phase.phase, "TopLevel");
+        assert_eq!(top_phase.read.bytes, 100);
+        assert_eq!(top_phase.write.bytes, 200);
+        assert_eq!(top_phase.read.bytes_with_sub_comm, 150); // 100 (direct) + 50 (from sub)
+        assert_eq!(top_phase.write.bytes_with_sub_comm, 300); // 200 (direct) + 100 (from sub)
+
+        // Check sub-phase metrics
+        let sub_phase = top_phase
+            .sub_comm_data
+            .get("SubOperation")
+            .expect("SubOperation phase should exist");
+        assert_eq!(sub_phase.phase, "SubOperation");
+        assert_eq!(sub_phase.read.bytes, 50);
+        assert_eq!(sub_phase.write.bytes, 100);
+        assert_eq!(sub_phase.read.bytes_with_sub_comm, 50);
+        assert_eq!(sub_phase.write.bytes_with_sub_comm, 100);
+
+        // Reset metrics and verify they're cleared
+        let reset_metrics = comm_data.reset();
+        assert!(reset_metrics.get("TopLevel").is_some());
+        let new_metrics = comm_data.comm_data();
+        assert!(new_metrics.get("TopLevel").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_parallel_span_accumulation() {
+        #[instrument(target = "seec_metrics", fields(phase = "ParentPhase"))]
+        async fn parallel_operation(id: u32) {
+            // If communication of a sub-phase happens in a spawned task, the future needs
+            // to be instrumented with the current span to preserve hierarchy
+            tokio::spawn(sub_operation(id).in_current_span()).await.unwrap();
+        }
+
+        #[instrument(target = "seec_metrics", fields(phase = "SubPhase"))]
+        async fn sub_operation(id: u32) {
+            // Each sub-operation does some communication
+            event!(
+                target: "seec_metrics",
+                Level::TRACE,
+                bytes_written = 100,
+            );
+            event!(
+                target: "seec_metrics",
+                Level::TRACE,
+                bytes_read = 50
+            );
+            // Simulate some work to increase chance of overlap
+            sleep(Duration::from_millis(10)).await;
+        }
+
+        // Set up the metrics layer
+        let (comm_layer, comm_data) = new_comm_layer();
+        let subscriber = Registry::default().with(comm_layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        // Run parallel operations
+        join!(parallel_operation(1), parallel_operation(2));
+
+        // Verify metrics
+        let metrics = comm_data.comm_data();
+        let phase = metrics
+            .get("ParentPhase")
+            .expect("ParentPhase should exist");
+
+        // The sub-phase metrics should accumulate from both parallel operations
+        let sub_phase = phase
+            .sub_comm_data
+            .get("SubPhase")
+            .expect("SubPhase should exist");
+
+        // Each parallel operation writes 100 bytes in the sub-phase
+        // So we expect 200 total bytes written in the sub-phase
+        assert_eq!(
+            sub_phase.write.bytes, 200,
+            "Expected accumulated writes from both parallel operations"
+        );
+
+        // Each parallel operation reads 50 bytes in the sub-phase
+        // So we expect 100 total bytes read in the sub-phase
+        assert_eq!(
+            sub_phase.read.bytes, 100,
+            "Expected accumulated reads from both parallel operations"
+        );
+
+        // Parent phase should accumulate all sub-phase metrics
+        assert_eq!(
+            phase.write.bytes_with_sub_comm, 200,
+            "Parent should include all sub-phase writes"
+        );
+        assert_eq!(
+            phase.read.bytes_with_sub_comm, 100,
+            "Parent should include all sub-phase reads"
+        );
+    }
 }

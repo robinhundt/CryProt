@@ -19,7 +19,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             || server.sub_connection(),
             |mut server| async move {
                 let id = id.fetch_add(1, Ordering::Relaxed);
-                server.byte_stream(Id::new(id)).await;
+                server.byte_stream(Id::new(id)).await.unwrap();
             },
             BatchSize::SmallInput,
         )
@@ -34,8 +34,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             let mut client = client.sub_connection();
             async move {
                 let id = id.fetch_add(1, Ordering::Relaxed);
-                let (mut snd_s, mut rcv_s) = server.byte_stream(Id::new(id)).await;
-                let (mut snd_c, mut rcv_c) = client.byte_stream(Id::new(id)).await;
+                let (mut snd_s, mut rcv_s) = server.byte_stream(Id::new(id)).await.unwrap();
+                let (mut snd_c, mut rcv_c) = client.byte_stream(Id::new(id)).await.unwrap();
                 let now = Instant::now();
 
                 for _ in 0..iters {
@@ -80,8 +80,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let mut client = client.sub_connection();
                 async move {
                     let id = id.fetch_add(1, Ordering::Relaxed);
-                    let (mut snd_s, mut rcv_s) = server.byte_stream(Id::new(id)).await;
-                    let (mut snd_c, mut rcv_c) = client.byte_stream(Id::new(id)).await;
+                    let (mut snd_s, mut rcv_s) = server.byte_stream(Id::new(id)).await.unwrap();
+                    let (mut snd_c, mut rcv_c) = client.byte_stream(Id::new(id)).await.unwrap();
                     let mut ret_buf_s = vec![0; len];
                     let mut ret_buf_c = vec![0; len];
 
@@ -135,8 +135,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let mut client = client.sub_connection();
                 async move {
                     let id = id.fetch_add(1, Ordering::Relaxed);
-                    let (mut snd_s, _rcv_s) = server.byte_stream(Id::new(id)).await;
-                    let (_snd_c, mut rcv_c) = client.byte_stream(Id::new(id)).await;
+                    let (mut snd_s, _rcv_s) = server.byte_stream(Id::new(id)).await.unwrap();
+                    let (_snd_c, mut rcv_c) = client.byte_stream(Id::new(id)).await.unwrap();
                     let mut ret_buf_c = vec![0; len];
 
                     let mut buf1 = buf.clone();
@@ -175,11 +175,11 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let mut client = client.sub_connection();
                 async move {
                     let sid = id.fetch_add(1, Ordering::Relaxed);
-                    let (mut snd_s1, _rcv_s) = server.byte_stream(Id::new(sid)).await;
-                    let (_snd_c, mut rcv_c1) = client.byte_stream(Id::new(sid)).await;
+                    let (mut snd_s1, _rcv_s) = server.byte_stream(Id::new(sid)).await.unwrap();
+                    let (_snd_c, mut rcv_c1) = client.byte_stream(Id::new(sid)).await.unwrap();
                     let sid = id.fetch_add(1, Ordering::Relaxed);
-                    let (mut snd_s2, _rcv_s) = server.byte_stream(Id::new(sid)).await;
-                    let (_snd_c, mut rcv_c2) = client.byte_stream(Id::new(sid)).await;
+                    let (mut snd_s2, _rcv_s) = server.byte_stream(Id::new(sid)).await.unwrap();
+                    let (_snd_c, mut rcv_c2) = client.byte_stream(Id::new(sid)).await.unwrap();
 
                     let mut ret_buf_c1 = vec![0; len];
                     let mut ret_buf_c2 = vec![0; len];

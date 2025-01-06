@@ -130,6 +130,9 @@ impl StreamManager {
         }
     }
 
+    /// Start the StreamManager to accept streams.
+    /// 
+    /// This method needs to be continually polled to establish new streams. 
     pub async fn start(mut self) {
         loop {
             select! {
@@ -173,7 +176,7 @@ impl StreamManager {
                     match cmd {
                         Cmd::NewStream {uid, stream_return} => {
                             if let Some(accepted) = self.accepted.remove(&uid) {
-                                if let Err(_) = stream_return.send(accepted) {
+                                if stream_return.send(accepted).is_err() {
                                     debug!("accepted remote stream but local receiver is closed");
                                 }
                                 break;
@@ -187,7 +190,7 @@ impl StreamManager {
                         }
                         Cmd::AcceptedStream {uid, stream, bytes_read} => {
                             if let Some(stream_ret) = self.pending.remove(&uid) {
-                               if let Err(_) = stream_ret.send((stream, bytes_read)) {
+                               if stream_ret.send((stream, bytes_read)).is_err() {
                                 debug!("accepted remote stream but local receiver is closed");
                                }
                             } else {
@@ -199,6 +202,16 @@ impl StreamManager {
             }
         }
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ConnectionError {
+    #[error("Unable to open stream")]
+    OpenStream(#[source] s2n_quic::connection::Error),
+    #[error("io error during stream establishment")]
+    IoError(#[source] io::Error),
+    #[error("StreamManager is dropped and not accepting connections")]
+    StreamManagerDropped
 }
 
 impl Connection {
@@ -216,7 +229,8 @@ impl Connection {
 
     /// Create a sub-connection. The n'th call to sub_connection
     /// is paired with the n'th call to `sub_connection` on the corresponding [`Connection`] of the
-    /// other party.
+    /// other party. Creating a sub-connection results in no immediate communication and is
+    /// a fast synchronous operation.
     pub fn sub_connection(&mut self) -> Self {
         let cid = self.next_cid.fetch_add(1, Ordering::Relaxed);
         let mut cids = self.cids.clone();
@@ -229,31 +243,32 @@ impl Connection {
         }
     }
 
-    pub async fn byte_stream(&mut self, id: Id) -> (SendStreamBytes, ReceiveStreamBytes) {
+    /// Establish a byte stream over this connection with the provided Id.
+    pub async fn byte_stream(&mut self, id: Id) -> Result<(SendStreamBytes, ReceiveStreamBytes), ConnectionError> {
         let uid = UniqueId::new(self.cids.clone(), id);
-        let mut snd = self.handle.open_send_stream().await.unwrap();
+        let mut snd = self.handle.open_send_stream().await.map_err(ConnectionError::OpenStream)?;
         let uid_bytes = uid.to_bytes();
         snd.write_all(&(uid_bytes.len() as u16).to_be_bytes())
-            .await
-            .unwrap();
-        snd.write_all(&uid_bytes).await.unwrap();
+            .await.map_err(ConnectionError::IoError)?;
+        snd.write_all(&uid_bytes).await.map_err(ConnectionError::IoError)?;
         event!(target: "seec_metrics", Level::TRACE, bytes_written = 2 + uid_bytes.len());
         let (stream_return, stream_recv) = oneshot::channel();
         self.cmd
             .send(Cmd::NewStream { uid, stream_return })
-            .unwrap();
+            .map_err(|_| ConnectionError::StreamManagerDropped)?;
         let snd = SendStreamBytes { inner: snd };
         let recv = ReceiveStreamBytes {
             inner: ReceiveStreamWrapper::Channel { stream_recv },
         };
-        (snd, recv)
+        Ok((snd, recv))
     }
 
+    /// Establish a typed stream over this connection.
     pub async fn stream<T: Serialize + DeserializeOwned>(
         &mut self,
         id: Id,
-    ) -> (SendStream<T>, ReceiveStream<T>) {
-        let (send_bytes, recv_bytes) = self.byte_stream(id).await;
+    ) -> Result<(SendStream<T>, ReceiveStream<T>), ConnectionError> {
+        let (send_bytes, recv_bytes) = self.byte_stream(id).await?;
         let mut ld_codec = LengthDelimitedCodec::builder();
         // TODO what is a sensible max length?
         const MB: usize = 1024 * 1024;
@@ -262,7 +277,7 @@ impl Connection {
         let framed_read = ld_codec.new_read(recv_bytes);
         let serde_send = SymmetricallyFramed::new(framed_send, Bincode::default());
         let serde_read = SymmetricallyFramed::new(framed_read, Bincode::default());
-        (serde_send, serde_read)
+        Ok((serde_send, serde_read))
     }
 }
 
@@ -429,8 +444,8 @@ mod tests {
     #[tokio::test]
     async fn sub_stream() -> Result<()> {
         let (mut s, mut c) = local_conn().await?;
-        let (mut s_send, _) = s.byte_stream(Id::new(0)).await;
-        let (_, mut c_recv) = c.byte_stream(Id::new(0)).await;
+        let (mut s_send, _) = s.byte_stream(Id::new(0)).await?;
+        let (_, mut c_recv) = c.byte_stream(Id::new(0)).await?;
         let send_buf = b"hello there";
         s_send.write_all(send_buf).await?;
         let mut buf = [0; 11];
@@ -442,7 +457,7 @@ mod tests {
     #[tokio::test]
     async fn sub_stream_different_order() -> Result<()> {
         let (mut s, mut c) = local_conn().await?;
-        let (mut s_send, mut s_recv) = s.byte_stream(Id::new(0)).await;
+        let (mut s_send, mut s_recv) = s.byte_stream(Id::new(0)).await?;
         let s_send_buf = b"hello there";
         s_send.write_all(s_send_buf).await?;
         let mut s_recv_buf = [0; 2];
@@ -452,7 +467,7 @@ mod tests {
             s_recv.read_exact(&mut s_recv_buf).await.unwrap();
             s_recv_buf
         });
-        let (mut c_send, mut c_recv) = c.byte_stream(Id::new(0)).await;
+        let (mut c_send, mut c_recv) = c.byte_stream(Id::new(0)).await?;
         let mut c_recv_buf = [0; 11];
         c_recv.read_exact(&mut c_recv_buf).await?;
         assert_eq!(s_send_buf, &c_recv_buf);
@@ -466,8 +481,8 @@ mod tests {
     #[tokio::test]
     async fn serde_sub_stream() -> Result<()> {
         let (mut s, mut c) = local_conn().await?;
-        let (mut snd, _) = s.stream::<Vec<i32>>(Id::new(0)).await;
-        let (_, mut recv) = c.stream::<Vec<i32>>(Id::new(0)).await;
+        let (mut snd, _) = s.stream::<Vec<i32>>(Id::new(0)).await?;
+        let (_, mut recv) = c.stream::<Vec<i32>>(Id::new(0)).await?;
         snd.send(vec![1, 2, 3]).await?;
         let ret = recv.next().await.context("recv")??;
         assert_eq!(vec![1, 2, 3], ret);
@@ -481,8 +496,8 @@ mod tests {
         let mut c2 = c1.sub_connection();
         let _ = s1.byte_stream(Id::new(0));
         let _ = c1.byte_stream(Id::new(0));
-        let (mut snd, _) = s2.stream::<Vec<i32>>(Id::new(0)).await;
-        let (_, mut recv) = c2.stream::<Vec<i32>>(Id::new(0)).await;
+        let (mut snd, _) = s2.stream::<Vec<i32>>(Id::new(0)).await?;
+        let (_, mut recv) = c2.stream::<Vec<i32>>(Id::new(0)).await?;
 
         snd.send(vec![1, 2, 3]).await?;
         let ret = recv.next().await.context("recv")??;
@@ -501,8 +516,8 @@ mod tests {
         let _ = c1.byte_stream(Id::new(0));
         let _ = s2.byte_stream(Id::new(1));
         let _ = c2.byte_stream(Id::new(1));
-        let (mut snd, _) = s3.stream::<Vec<i32>>(Id::new(0)).await;
-        let (_, mut recv) = c3.stream::<Vec<i32>>(Id::new(0)).await;
+        let (mut snd, _) = s3.stream::<Vec<i32>>(Id::new(0)).await?;
+        let (_, mut recv) = c3.stream::<Vec<i32>>(Id::new(0)).await?;
 
         snd.send(vec![1, 2, 3]).await?;
         let ret = recv.next().await.context("recv")??;

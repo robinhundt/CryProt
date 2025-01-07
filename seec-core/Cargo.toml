@@ -1,0 +1,8 @@
+[package]
+edition = "2021"
+name = "seec-core"
+version = "0.1.0"
+
+[dependencies]
+rand.workspace = true
+wide = "0.7.31"

@@ -1,11 +1,15 @@
 [workspace]
-members = ["seec-net", "seec-ot"]
+members = ["seec-core", "seec-net", "seec-ot"]
 resolver = "2"
 
 [workspace.dependencies]
 anyhow = "1.0.86"
+bitvec = "1.0.1"
 futures = "0.3.30"
 pin-project-lite = "0.2.14"
+rand = "0.8.5"
+seec-core = { path = "seec-core" }
+seec-net = { path = "seec-net" }
 serde = "1.0.203"
 thiserror = "2.0.9"
 tokio = "1.37.0"

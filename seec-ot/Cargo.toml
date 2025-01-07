@@ -1,6 +1,11 @@
 [package]
+edition = "2021"
 name = "seec-ot"
 version = "0.1.0"
-edition = "2021"
 
 [dependencies]
+bitvec.workspace = true
+curve25519-dalek = { version = "4.1.3", features = ["rand_core"] }
+rand.workspace = true
+seec-core.workspace = true
+seec-net.workspace = true

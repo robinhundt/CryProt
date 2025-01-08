@@ -33,12 +33,18 @@ use tracing::{debug, error, event, Level};
 pub mod metrics;
 
 #[doc(hidden)]
-#[cfg(any(test, feature = "__bench"))]
+#[cfg(any(test, feature = "__testing"))]
 pub mod testing;
 
-/// Id of a stream for a specific [`Connection`].
+/// Explicit Id provided by the user for a stream for a specific [`Connection`].
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Id(pub(crate) u64);
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+enum StreamId {
+    Implicit(u64),
+    Explicit(u64),
+}
 
 /// Id of a [`Connection`]. Does not include parent Ids of this connection.
 /// It is only unique with respect to its sibling connections created by
@@ -50,7 +56,7 @@ struct ConnectionId(pub(crate) u32);
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct UniqueId {
     cids: Vec<ConnectionId>,
-    id: Id,
+    id: StreamId,
 }
 
 type StreamSend = oneshot::Sender<(QuicRecvStream, usize)>;
@@ -76,10 +82,14 @@ pub struct Connection {
     next_cid: Arc<AtomicU32>,
     handle: Handle,
     cmd: mpsc::UnboundedSender<Cmd>,
+    next_implicit_id: u64,
 }
 
 pin_project! {
     /// Send part of the bytes stream.
+    // TODO provide a way to temporarily use a byte stream as a typed stream,
+    //  useful for protocols with different serde compatible msg types to
+    // prevent unnecessary stream creation
     pub struct SendStreamBytes {
         #[pin]
         inner: QuicSendStream
@@ -101,9 +111,21 @@ pub type SendStream<T> = SymmetricallyFramed<
     SymmetricalBincode<T>,
 >;
 
+pub type TempSendStream<'a, T> = SymmetricallyFramed<
+    FramedWrite<&'a mut SendStreamBytes, LengthDelimitedCodec>,
+    T,
+    SymmetricalBincode<T>,
+>;
+
 /// Receive part of the serialized stream.
 pub type ReceiveStream<T> = SymmetricallyFramed<
     FramedRead<ReceiveStreamBytes, LengthDelimitedCodec>,
+    T,
+    SymmetricalBincode<T>,
+>;
+
+pub type ReceiveStreamTemp<'a, T> = SymmetricallyFramed<
+    FramedRead<&'a mut ReceiveStreamBytes, LengthDelimitedCodec>,
     T,
     SymmetricalBincode<T>,
 >;
@@ -233,6 +255,7 @@ impl Connection {
             next_cid: Arc::new(AtomicU32::new(0)),
             handle,
             cmd: stream_manager.cmd_send.clone(),
+            next_implicit_id: 0,
         };
         (conn, stream_manager)
     }
@@ -250,15 +273,15 @@ impl Connection {
             next_cid: self.next_cid.clone(),
             handle: self.handle.clone(),
             cmd: self.cmd.clone(),
+            next_implicit_id: 0,
         }
     }
 
-    /// Establish a byte stream over this connection with the provided Id.
-    pub async fn byte_stream(
+    async fn internal_byte_stream(
         &mut self,
-        id: Id,
+        stream_id: StreamId,
     ) -> Result<(SendStreamBytes, ReceiveStreamBytes), ConnectionError> {
-        let uid = UniqueId::new(self.cids.clone(), id);
+        let uid = UniqueId::new(self.cids.clone(), stream_id);
         let mut snd = self
             .handle
             .open_send_stream()
@@ -283,12 +306,29 @@ impl Connection {
         Ok((snd, recv))
     }
 
-    /// Establish a typed stream over this connection.
-    pub async fn stream<T: Serialize + DeserializeOwned>(
+    /// Establish a byte stream over this connection with the provided Id.
+    pub async fn byte_stream(
+        &mut self,
+    ) -> Result<(SendStreamBytes, ReceiveStreamBytes), ConnectionError> {
+        self.next_implicit_id += 1;
+        self.internal_byte_stream(StreamId::Implicit(self.next_implicit_id - 1))
+            .await
+    }
+
+    /// Establish a byte stream over this connection with the provided Id.
+    pub async fn byte_stream_with_id(
         &mut self,
         id: Id,
+    ) -> Result<(SendStreamBytes, ReceiveStreamBytes), ConnectionError> {
+        self.internal_byte_stream(StreamId::Explicit(id.0)).await
+    }
+
+    /// Establish a typed stream over this connection.
+    async fn internal_stream<T: Serialize + DeserializeOwned>(
+        &mut self,
+        id: StreamId,
     ) -> Result<(SendStream<T>, ReceiveStream<T>), ConnectionError> {
-        let (send_bytes, recv_bytes) = self.byte_stream(id).await?;
+        let (send_bytes, recv_bytes) = self.internal_byte_stream(id).await?;
         let mut ld_codec = LengthDelimitedCodec::builder();
         // TODO what is a sensible max length?
         const MB: usize = 1024 * 1024;
@@ -299,19 +339,91 @@ impl Connection {
         let serde_read = SymmetricallyFramed::new(framed_read, Bincode::default());
         Ok((serde_send, serde_read))
     }
+
+    /// Establish a typed stream over this connection.
+    pub async fn stream<T: Serialize + DeserializeOwned>(
+        &mut self,
+    ) -> Result<(SendStream<T>, ReceiveStream<T>), ConnectionError> {
+        self.next_implicit_id += 1;
+        self.internal_stream(StreamId::Implicit(self.next_implicit_id - 1))
+            .await
+    }
+
+    /// Establish a typed stream over this connection with the provided explicit
+    /// Id.
+    pub async fn stream_with_id<T: Serialize + DeserializeOwned>(
+        &mut self,
+        id: Id,
+    ) -> Result<(SendStream<T>, ReceiveStream<T>), ConnectionError> {
+        self.internal_stream(StreamId::Explicit(id.0)).await
+    }
+
+    async fn internal_request_response_stream<T: Serialize, S: DeserializeOwned>(
+        &mut self,
+        id: StreamId,
+    ) -> Result<(SendStream<T>, ReceiveStream<S>), ConnectionError> {
+        let (send_bytes, recv_bytes) = self.internal_byte_stream(id).await?;
+        let mut ld_codec = LengthDelimitedCodec::builder();
+        // TODO what is a sensible max length?
+        const MB: usize = 1024 * 1024;
+        ld_codec.max_frame_length(256 * MB);
+        let framed_send = ld_codec.new_write(send_bytes);
+        let framed_read = ld_codec.new_read(recv_bytes);
+        let serde_send = SymmetricallyFramed::new(framed_send, Bincode::default());
+        let serde_read = SymmetricallyFramed::new(framed_read, Bincode::default());
+        Ok((serde_send, serde_read))
+    }
+
+    /// Establish a typed request-response stream over this connection with
+    /// differing types for the request and response.
+    pub async fn request_response_stream<T: Serialize, S: DeserializeOwned>(
+        &mut self,
+    ) -> Result<(SendStream<T>, ReceiveStream<S>), ConnectionError> {
+        self.next_implicit_id += 1;
+        self.internal_request_response_stream(StreamId::Implicit(self.next_implicit_id - 1))
+            .await
+    }
+
+    /// Establish a typed request-response stream over this connection with
+    /// differing types for the request and response.
+    pub async fn request_response_stream_with_id<T: Serialize, S: DeserializeOwned>(
+        &mut self,
+        id: Id,
+    ) -> Result<(SendStream<T>, ReceiveStream<S>), ConnectionError> {
+        self.internal_request_response_stream(StreamId::Explicit(id.0))
+            .await
+    }
 }
 
 impl Id {
     pub fn new(id: u64) -> Self {
         Self(id)
     }
+}
 
-    pub fn from_bytes(bytes: [u8; 8]) -> Self {
-        Self(u64::from_be_bytes(bytes))
+impl StreamId {
+    const SERIALIZED_SIZE: usize = 9;
+
+    fn from_bytes(bytes: [u8; 9]) -> Self {
+        let id = u64::from_be_bytes(bytes[1..].try_into().expect("slice has size 8"));
+        match bytes[0] {
+            0 => Self::Explicit(id),
+            _ => Self::Implicit(id),
+        }
     }
 
-    pub fn to_bytes(self) -> [u8; 8] {
-        self.0.to_be_bytes()
+    fn to_bytes(self) -> [u8; 9] {
+        let mut ret = [0; 9];
+        match self {
+            Self::Explicit(id) => {
+                ret[1..].copy_from_slice(&id.to_be_bytes());
+            }
+            Self::Implicit(id) => {
+                ret[0] = 1;
+                ret[1..].copy_from_slice(&id.to_be_bytes());
+            }
+        }
+        ret
     }
 }
 
@@ -334,19 +446,23 @@ pub enum ParseUniqueIdError {
 }
 
 impl UniqueId {
-    fn new(cid: Vec<ConnectionId>, id: Id) -> Self {
+    fn new(cid: Vec<ConnectionId>, id: StreamId) -> Self {
         Self { cids: cid, id }
     }
 
     fn from_bytes(mut bytes: &[u8]) -> Result<Self, ParseUniqueIdError> {
-        if bytes.len() < 8 {
+        if bytes.len() < StreamId::SERIALIZED_SIZE {
             return Err(ParseUniqueIdError::InsufficientData);
         }
-        let id = Id::from_bytes(bytes[..8].try_into().expect("len checked before"));
-        bytes = &bytes[8..];
+        let id = StreamId::from_bytes(
+            bytes[..StreamId::SERIALIZED_SIZE]
+                .try_into()
+                .expect("len checked before"),
+        );
+        bytes = &bytes[StreamId::SERIALIZED_SIZE..];
 
-        let mut chunks_iter = bytes.chunks_exact(4);
         // 4 bytes in u32
+        let mut chunks_iter = bytes.chunks_exact(4);
         let cids = chunks_iter
             .by_ref()
             .map(|chunk| ConnectionId::from_bytes(chunk.try_into().unwrap()))
@@ -369,6 +485,18 @@ impl UniqueId {
             ret.extend_from_slice(&cid.to_bytes());
         }
         ret
+    }
+}
+
+impl SendStreamBytes {
+    pub fn as_stream<T: Serialize>(&mut self) -> TempSendStream<T> {
+        let mut ld_codec = LengthDelimitedCodec::builder();
+        // TODO what is a sensible max length?
+        const MB: usize = 1024 * 1024;
+        ld_codec.max_frame_length(256 * MB);
+        let framed_send = ld_codec.new_write(self);
+        let serde_send = SymmetricallyFramed::new(framed_send, Bincode::default());
+        serde_send
     }
 }
 
@@ -413,6 +541,18 @@ fn trace_poll(p: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
     p
 }
 
+impl ReceiveStreamBytes {
+    pub fn as_stream<T: DeserializeOwned>(&mut self) -> ReceiveStreamTemp<T> {
+        let mut ld_codec = LengthDelimitedCodec::builder();
+        // TODO what is a sensible max length?
+        const MB: usize = 1024 * 1024;
+        ld_codec.max_frame_length(256 * MB);
+        let framed_read = ld_codec.new_read(self);
+        let serde_read = SymmetricallyFramed::new(framed_read, Bincode::default());
+        serde_read
+    }
+}
+
 // Implement AsyncRead for ReceiveStream to poll the oneshot Receiver first if
 // there is not already a channel.
 impl AsyncRead for ReceiveStreamBytes {
@@ -452,6 +592,8 @@ impl AsyncRead for ReceiveStreamBytes {
 
 #[cfg(test)]
 mod tests {
+    use std::u8;
+
     use anyhow::{Context, Result};
     use futures::{SinkExt, StreamExt};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -465,10 +607,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_stream() -> Result<()> {
+    async fn byte_stream() -> Result<()> {
         let (mut s, mut c) = local_conn().await?;
-        let (mut s_send, _) = s.byte_stream(Id::new(0)).await?;
-        let (_, mut c_recv) = c.byte_stream(Id::new(0)).await?;
+        let (mut s_send, _) = s.byte_stream_with_id(Id::new(0)).await?;
+        let (_, mut c_recv) = c.byte_stream_with_id(Id::new(0)).await?;
         let send_buf = b"hello there";
         s_send.write_all(send_buf).await?;
         let mut buf = [0; 11];
@@ -478,9 +620,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sub_stream_different_order() -> Result<()> {
+    async fn byte_stream_explicit_implicit_id() -> Result<()> {
         let (mut s, mut c) = local_conn().await?;
-        let (mut s_send, mut s_recv) = s.byte_stream(Id::new(0)).await?;
+        let (mut s_send1, _) = s.byte_stream_with_id(Id::new(0)).await?;
+        let (mut s_send2, _) = s.byte_stream().await?;
+        let (_, mut c_recv1) = c.byte_stream_with_id(Id::new(0)).await?;
+        let (_, mut c_recv2) = c.byte_stream().await?;
+        let send_buf1 = b"hello there";
+        s_send1.write_all(send_buf1).await?;
+        let mut buf = [0; 11];
+        c_recv1.read_exact(&mut buf).await?;
+        assert_eq!(send_buf1, &buf);
+
+        let send_buf2 = b"general kenobi";
+        s_send2.write_all(send_buf2).await?;
+        let mut buf = [0; 14];
+        c_recv2.read_exact(&mut buf).await?;
+        assert_eq!(send_buf2, &buf);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn byte_stream_different_order() -> Result<()> {
+        let (mut s, mut c) = local_conn().await?;
+        let (mut s_send, mut s_recv) = s.byte_stream_with_id(Id::new(0)).await?;
         let s_send_buf = b"hello there";
         s_send.write_all(s_send_buf).await?;
         let mut s_recv_buf = [0; 2];
@@ -490,7 +653,7 @@ mod tests {
             s_recv.read_exact(&mut s_recv_buf).await.unwrap();
             s_recv_buf
         });
-        let (mut c_send, mut c_recv) = c.byte_stream(Id::new(0)).await?;
+        let (mut c_send, mut c_recv) = c.byte_stream_with_id(Id::new(0)).await?;
         let mut c_recv_buf = [0; 11];
         c_recv.read_exact(&mut c_recv_buf).await?;
         assert_eq!(s_send_buf, &c_recv_buf);
@@ -502,13 +665,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serde_sub_stream() -> Result<()> {
+    async fn serde_stream() -> Result<()> {
         let (mut s, mut c) = local_conn().await?;
-        let (mut snd, _) = s.stream::<Vec<i32>>(Id::new(0)).await?;
-        let (_, mut recv) = c.stream::<Vec<i32>>(Id::new(0)).await?;
+        let (mut snd, _) = s.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
+        let (_, mut recv) = c.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
         snd.send(vec![1, 2, 3]).await?;
         let ret = recv.next().await.context("recv")??;
         assert_eq!(vec![1, 2, 3], ret);
+        drop(snd);
+        let ret = recv.next().await.map(|res| res.map_err(|_| ()));
+        assert_eq!(None, ret);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serde_stream_block() -> Result<()> {
+        let (mut s, mut c) = local_conn().await?;
+        let (mut snd, _) = s.stream_with_id(Id::new(0)).await?;
+        let (_, mut recv) = c.stream_with_id(Id::new(0)).await?;
+        snd.send(vec![u8::MAX; 16]).await?;
+        let ret: Vec<_> = recv.next().await.context("recv")??;
+        assert_eq!(vec![u8::MAX; 16], ret);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serde_byte_stream_as_stream() -> Result<()> {
+        let (mut s, mut c) = local_conn().await?;
+        let (mut s_send, _) = s.byte_stream_with_id(Id::new(0)).await?;
+        let (_, mut c_recv) = c.byte_stream_with_id(Id::new(0)).await?;
+        {
+            let mut send_ser1 = s_send.as_stream::<i32>();
+            let mut recv_ser1 = c_recv.as_stream::<i32>();
+            send_ser1.send(42).await?;
+            let ret = recv_ser1.next().await.context("recv")??;
+            assert_eq!(42, ret);
+        }
+        {
+            let mut send_ser2 = s_send.as_stream::<Vec<i32>>();
+            let mut recv_ser2 = c_recv.as_stream::<Vec<i32>>();
+            send_ser2.send(vec![1, 2, 3]).await?;
+            let ret = recv_ser2.next().await.context("recv")??;
+            assert_eq!(vec![1, 2, 3], ret);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn serde_request_response_stream() -> Result<()> {
+        let (mut s, mut c) = local_conn().await?;
+        let (mut snd1, mut recv1) = s
+            .request_response_stream_with_id::<Vec<i32>, String>(Id::new(0))
+            .await?;
+        let (mut snd2, mut recv2) = c
+            .request_response_stream_with_id::<String, Vec<i32>>(Id::new(0))
+            .await?;
+        snd1.send(vec![1, 2, 3]).await?;
+        let ret = recv2.next().await.context("recv")??;
+        assert_eq!(vec![1, 2, 3], ret);
+        snd2.send("hello there".to_string()).await?;
+        let ret = recv1.next().await.context("recv2")??;
+        assert_eq!("hello there", &ret);
         Ok(())
     }
 
@@ -517,10 +734,10 @@ mod tests {
         let (mut s1, mut c1) = local_conn().await?;
         let mut s2 = s1.sub_connection();
         let mut c2 = c1.sub_connection();
-        let _ = s1.byte_stream(Id::new(0));
-        let _ = c1.byte_stream(Id::new(0));
-        let (mut snd, _) = s2.stream::<Vec<i32>>(Id::new(0)).await?;
-        let (_, mut recv) = c2.stream::<Vec<i32>>(Id::new(0)).await?;
+        let _ = s1.byte_stream_with_id(Id::new(0));
+        let _ = c1.byte_stream_with_id(Id::new(0));
+        let (mut snd, _) = s2.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
+        let (_, mut recv) = c2.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
 
         snd.send(vec![1, 2, 3]).await?;
         let ret = recv.next().await.context("recv")??;
@@ -535,12 +752,12 @@ mod tests {
         let mut c2 = c1.sub_connection();
         let mut s3 = s2.sub_connection();
         let mut c3 = c2.sub_connection();
-        let _ = s1.byte_stream(Id::new(0));
-        let _ = c1.byte_stream(Id::new(0));
-        let _ = s2.byte_stream(Id::new(1));
-        let _ = c2.byte_stream(Id::new(1));
-        let (mut snd, _) = s3.stream::<Vec<i32>>(Id::new(0)).await?;
-        let (_, mut recv) = c3.stream::<Vec<i32>>(Id::new(0)).await?;
+        let _ = s1.byte_stream_with_id(Id::new(0));
+        let _ = c1.byte_stream_with_id(Id::new(0));
+        let _ = s2.byte_stream_with_id(Id::new(1));
+        let _ = c2.byte_stream_with_id(Id::new(1));
+        let (mut snd, _) = s3.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
+        let (_, mut recv) = c3.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
 
         snd.send(vec![1, 2, 3]).await?;
         let ret = recv.next().await.context("recv")??;

@@ -5,7 +5,15 @@ version = "0.1.0"
 
 [dependencies]
 bitvec.workspace = true
-curve25519-dalek = { version = "4.1.3", features = ["rand_core"] }
+curve25519-dalek = { version = "4.1.3", features = ["rand_core", "serde"] }
+futures.workspace = true
 rand.workspace = true
 seec-core.workspace = true
 seec-net.workspace = true
+subtle = "2.6.1"
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+seec-net = { workspace = true, features = ["__testing"] }
+tokio = { workspace = true, features = ["full"] }

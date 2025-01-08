@@ -3,7 +3,7 @@ use std::future::Future;
 use bitvec::slice::BitSlice;
 use seec_core::Block;
 
-mod base;
+pub mod base;
 
 pub trait RotSender {
     type Error;
@@ -19,6 +19,6 @@ pub trait RotReceiver {
 
     fn receive(
         &mut self,
-        choices: BitSlice,
+        choices: &BitSlice,
     ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send;
 }

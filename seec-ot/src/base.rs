@@ -60,7 +60,7 @@ impl RotSender for SimplestOt {
             .request_response_stream_with_id(Id::new(0))
             .await?;
         send_m1
-            .send((A, seed_commitment.as_bytes().clone()))
+            .send((A, *seed_commitment.as_bytes()))
             .await?;
 
         let B_points: Vec<RistrettoPoint> = recv_m2.next().await.ok_or(Error::ClosedStream)??;

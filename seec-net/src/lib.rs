@@ -495,8 +495,7 @@ impl SendStreamBytes {
         const MB: usize = 1024 * 1024;
         ld_codec.max_frame_length(256 * MB);
         let framed_send = ld_codec.new_write(self);
-        let serde_send = SymmetricallyFramed::new(framed_send, Bincode::default());
-        serde_send
+        SymmetricallyFramed::new(framed_send, Bincode::default())
     }
 }
 
@@ -548,8 +547,7 @@ impl ReceiveStreamBytes {
         const MB: usize = 1024 * 1024;
         ld_codec.max_frame_length(256 * MB);
         let framed_read = ld_codec.new_read(self);
-        let serde_read = SymmetricallyFramed::new(framed_read, Bincode::default());
-        serde_read
+        SymmetricallyFramed::new(framed_read, Bincode::default())
     }
 }
 

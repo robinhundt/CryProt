@@ -10,6 +10,7 @@ use seec_core::{
 };
 use seec_net::{Connection, ConnectionError, Id};
 use subtle::{Choice, ConditionallySelectable};
+use tracing::Level;
 
 use crate::{RotReceiver, RotSender};
 
@@ -49,6 +50,7 @@ impl RotSender for SimplestOt {
     type Error = Error;
 
     #[allow(non_snake_case)]
+    #[tracing::instrument(level = Level::DEBUG, skip(self))]
     async fn send(&mut self, count: usize) -> Result<Vec<[Block; 2]>, Self::Error> {
         let a = Scalar::random(&mut self.rng);
         let mut A = RISTRETTO_BASEPOINT_TABLE * &a;
@@ -59,9 +61,7 @@ impl RotSender for SimplestOt {
             .conn
             .request_response_stream_with_id(Id::new(0))
             .await?;
-        send_m1
-            .send((A, *seed_commitment.as_bytes()))
-            .await?;
+        send_m1.send((A, *seed_commitment.as_bytes())).await?;
 
         let B_points: Vec<RistrettoPoint> = recv_m2.next().await.ok_or(Error::ClosedStream)??;
         if B_points.len() != count {
@@ -94,6 +94,7 @@ impl RotReceiver for SimplestOt {
     type Error = Error;
 
     #[allow(non_snake_case)]
+    #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn receive(&mut self, choices: &BitSlice) -> Result<Vec<Block>, Self::Error> {
         let (mut send_m2, mut recv_m1) = self
             .conn
@@ -147,11 +148,10 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
-
     use anyhow::Result;
     use bitvec::bitvec;
     use rand::{rngs::StdRng, Rng, SeedableRng};
+    use seec_core::test_utils::init_tracing;
     use seec_net::testing::local_conn;
 
     use super::SimplestOt;
@@ -159,6 +159,7 @@ mod tests {
 
     #[tokio::test]
     async fn base_rot() -> Result<()> {
+        let _g = init_tracing();
         let (c1, c2) = local_conn().await?;
         let mut rng1 = StdRng::seed_from_u64(42);
         let rng2 = StdRng::seed_from_u64(42 * 42);
@@ -169,9 +170,7 @@ mod tests {
 
         let mut sender = SimplestOt::new_with_rng(c1, rng1);
         let mut receiver = SimplestOt::new_with_rng(c2, rng2);
-        let now = Instant::now();
         let (s_ot, r_ot) = tokio::try_join!(sender.send(count), receiver.receive(&choices))?;
-        dbg!(now.elapsed());
 
         for ((r, s), c) in r_ot.into_iter().zip(s_ot).zip(choices) {
             assert_eq!(r, s[c as usize])

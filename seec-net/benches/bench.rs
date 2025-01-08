@@ -6,8 +6,11 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     join,
 };
+use seec_core::test_utils::init_bench_tracing;
 
 fn criterion_benchmark(c: &mut Criterion) {
+    init_bench_tracing();
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

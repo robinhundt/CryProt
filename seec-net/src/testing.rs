@@ -11,6 +11,7 @@ static CERT_PEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs
 /// NOTE: this certificate is to be used for demonstration purposes only!
 static KEY_PEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/key.pem"));
 
+#[tracing::instrument]
 pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
     let max_streams = 1 << 59;
     let limits = Limits::new()

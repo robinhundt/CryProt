@@ -12,8 +12,15 @@ seec-core.workspace = true
 seec-net.workspace = true
 subtle = "2.6.1"
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+criterion.workspace = true
+seec-core = { workspace = true, features = ["__testing"] }
 seec-net = { workspace = true, features = ["__testing"] }
 tokio = { workspace = true, features = ["full"] }
+
+[[bench]]
+harness = false
+name = "bench"

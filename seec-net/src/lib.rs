@@ -165,10 +165,12 @@ impl StreamManager {
     /// Start the StreamManager to accept streams.
     ///
     /// This method needs to be continually polled to establish new streams.
+    #[tracing::instrument(skip_all)]
     pub async fn start(mut self) {
         loop {
             select! {
                 res = self.acceptor.accept_receive_stream() => {
+                    debug!("accepted stream");
                     match res {
                         Ok(Some(mut stream)) => {
                             let cmd_send = self.cmd_send.clone();
@@ -195,7 +197,7 @@ impl StreamManager {
                             });
                         }
                         Ok(None) => {
-                            // connection is closed
+                            debug!("remote closed");
                             return;
                         }
                         Err(err) => {
@@ -211,7 +213,7 @@ impl StreamManager {
                                 if stream_return.send(accepted).is_err() {
                                     debug!("accepted remote stream but local receiver is closed");
                                 }
-                                break;
+                                continue;
                             }
                             match self.pending.entry(uid) {
                                 Entry::Occupied(occupied_entry) => {

@@ -1,5 +1,7 @@
 use std::ops::{BitAnd, BitOr, BitXor, Not};
 
+use aes::cipher::{self, array::sizes};
+use bytemuck::{Pod, Zeroable};
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use wide::u8x16;
@@ -7,7 +9,7 @@ use wide::u8x16;
 use crate::random_oracle::RandomOracle;
 
 /// A 128-bit block. Uses SIMD operations where available.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Pod, Zeroable)]
 #[repr(transparent)]
 pub struct Block(u8x16);
 
@@ -88,5 +90,19 @@ impl Distribution<Block> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Block {
         let bits = rng.gen();
         Block::new(bits)
+    }
+}
+
+impl AsMut<[u8]> for Block {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.as_mut_bytes()
+    }
+}
+
+impl From<Block> for cipher::Array<u8, sizes::U16> {
+    #[inline]
+    fn from(value: Block) -> Self {
+        Self(*value.as_bytes())
     }
 }

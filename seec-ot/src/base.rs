@@ -8,7 +8,7 @@ use seec_core::{
     random_oracle::{Hash, RandomOracle},
     Block,
 };
-use seec_net::{Connection, ConnectionError, Id};
+use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
@@ -57,13 +57,16 @@ impl RotSender for SimplestOt {
         let seed: Block = self.rng.gen();
         // commit to the seed
         let seed_commitment = seed.ro_hash();
-        let (mut send_m1, mut recv_m2) = self
-            .conn
-            .request_response_stream_with_id(Id::new(0))
-            .await?;
-        send_m1.send((A, *seed_commitment.as_bytes())).await?;
+        let (mut send, mut recv) = self.conn.byte_stream().await?;
+        {
+            let mut send_m1 = send.as_stream();
+            send_m1.send((A, *seed_commitment.as_bytes())).await?;
+        }
 
-        let B_points: Vec<RistrettoPoint> = recv_m2.next().await.ok_or(Error::ClosedStream)??;
+        let B_points: Vec<RistrettoPoint> = {
+            let mut recv_m2 = recv.as_stream();
+            recv_m2.next().await.ok_or(Error::ClosedStream)??
+        };
         if B_points.len() != count {
             return Err(Error::InsufficientPoints {
                 expected: count,
@@ -71,8 +74,10 @@ impl RotSender for SimplestOt {
             });
         }
         // decommit seed
-        let (mut send_m3, _) = self.conn.stream_with_id(Id::new(1)).await?;
-        send_m3.send(seed).await?;
+        {
+            let mut send_m3 = send.as_stream();
+            send_m3.send(seed).await?;
+        }
 
         A *= a;
         let ots = B_points
@@ -96,12 +101,11 @@ impl RotReceiver for SimplestOt {
     #[allow(non_snake_case)]
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn receive(&mut self, choices: &BitSlice) -> Result<Vec<Block>, Self::Error> {
-        let (mut send_m2, mut recv_m1) = self
-            .conn
-            .request_response_stream_with_id(Id::new(0))
-            .await?;
-        let (A, commitment): (RistrettoPoint, [u8; 32]) =
-            recv_m1.next().await.ok_or(Error::ClosedStream)??;
+        let (mut send, mut recv) = self.conn.byte_stream().await?;
+        let (A, commitment): (RistrettoPoint, [u8; 32]) = {
+            let mut recv_m1 = recv.as_stream();
+            recv_m1.next().await.ok_or(Error::ClosedStream)??
+        };
 
         let (b_points, B_points): (Vec<_>, Vec<_>) = choices
             .iter()
@@ -114,11 +118,15 @@ impl RotReceiver for SimplestOt {
                 (b, B_choice)
             })
             .unzip();
+        {
+            let mut send_m2 = send.as_stream();
+            send_m2.send(B_points).await?;
+        }
 
-        send_m2.send(B_points).await?;
-        let (_, mut recv_3) = self.conn.stream_with_id(Id::new(1)).await?;
-
-        let seed: Block = recv_3.next().await.ok_or(Error::ClosedStream)??;
+        let seed: Block = {
+            let mut recv_3 = recv.as_stream();
+            recv_3.next().await.ok_or(Error::ClosedStream)??
+        };
         if Hash::from_bytes(commitment) != seed.ro_hash() {
             return Err(Error::CommitmentHashesNotEqual);
         }

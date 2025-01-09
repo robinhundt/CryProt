@@ -5,10 +5,12 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = "1.0.86"
 bitvec = "1.0.1"
+bytemuck = "1.21.0"
 criterion = { version = "0.4", features = ["async_tokio", "html_reports"] }
 futures = "0.3.30"
 pin-project-lite = "0.2.14"
 rand = "0.8.5"
+rand_core = "0.6.4"
 seec-core = { path = "seec-core" }
 seec-net = { path = "seec-net" }
 serde = "1.0.203"

@@ -1,9 +1,10 @@
-use std::ops::{BitAnd, BitOr, BitXor, Not};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 
 use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
+use subtle::Choice;
 use wide::u8x16;
 
 use crate::random_oracle::RandomOracle;
@@ -38,6 +39,22 @@ impl Block {
         ro.update(self.as_bytes());
         ro.finalize()
     }
+
+    ///  Create a block from 128 [`Choice`]s.
+    ///
+    /// # Panics
+    /// If choices.len() != 128
+    #[inline]
+    pub fn from_choices(choices: &[Choice]) -> Self {
+        assert_eq!(128, choices.len(), "choices.len() must be 128");
+        let mut bytes = [0_u8; 16];
+        for (chunk, byte) in choices.chunks_exact(8).zip(&mut bytes) {
+            for (i, choice) in chunk.iter().enumerate() {
+                *byte ^= choice.unwrap_u8() << i;
+            }
+        }
+        Self::new(bytes)
+    }
 }
 
 // Implement standard operators for more ergonomic usage
@@ -50,6 +67,13 @@ impl BitAnd for Block {
     }
 }
 
+impl BitAndAssign for Block {
+    #[inline]
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = *self & rhs;
+    }
+}
+
 impl BitOr for Block {
     type Output = Self;
 
@@ -59,12 +83,26 @@ impl BitOr for Block {
     }
 }
 
+impl BitOrAssign for Block {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = *self | rhs;
+    }
+}
+
 impl BitXor for Block {
     type Output = Self;
 
     #[inline]
     fn bitxor(self, rhs: Self) -> Self {
         Self(self.0 ^ rhs.0)
+    }
+}
+
+impl BitXorAssign for Block {
+    #[inline]
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = *self ^ rhs;
     }
 }
 
@@ -104,5 +142,12 @@ impl From<Block> for cipher::Array<u8, sizes::U16> {
     #[inline]
     fn from(value: Block) -> Self {
         Self(*value.as_bytes())
+    }
+}
+
+impl From<cipher::Array<u8, sizes::U16>> for Block {
+    #[inline]
+    fn from(value: cipher::Array<u8, sizes::U16>) -> Self {
+        Self::new(value.0)
     }
 }

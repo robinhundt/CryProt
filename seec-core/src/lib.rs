@@ -5,5 +5,7 @@ pub mod random_oracle;
 #[cfg(feature = "__testing")]
 pub mod test_utils;
 pub mod transpose;
+pub mod aes_hash;
+pub mod utils;
 
 pub use block::Block;

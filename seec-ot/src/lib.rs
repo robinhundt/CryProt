@@ -1,9 +1,11 @@
 use std::future::Future;
 
-use bitvec::slice::BitSlice;
+use rand::{distributions, prelude::Distribution, CryptoRng, Rng};
 use seec_core::Block;
+use subtle::Choice;
 
 pub mod base;
+pub mod extension;
 
 pub trait RotSender {
     type Error;
@@ -19,6 +21,15 @@ pub trait RotReceiver {
 
     fn receive(
         &mut self,
-        choices: &BitSlice,
+        choices: &[Choice],
     ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send;
+}
+
+pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<Choice> {
+    let uniform = distributions::Uniform::new(0, 2);
+    uniform
+        .sample_iter(rng)
+        .take(count)
+        .map(|v| Choice::from(v))
+        .collect()
 }

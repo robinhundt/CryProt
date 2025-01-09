@@ -1,11 +1,17 @@
 use wide::{i64x2, i8x16};
 
+pub fn transpose_bitmatrix(input: &[u8], rows: usize) -> Vec<u8> {
+    let mut out = vec![0; input.len()];
+    transpose_bitmatrix_into(input, &mut out, rows);
+    out
+}
+
 /// Transpose a bit matrix.
 ///
 /// # Panics
 /// If the input is not divisable by 128.
 /// If the number of columns (= input.len() * 8 / 128) is less than 128.
-pub fn transpose_bitmatrix(input: &[u8], rows: usize) -> Vec<u8> {
+pub fn transpose_bitmatrix_into(input: &[u8], output: &mut [u8], rows: usize) {
     assert!(rows >= 16);
     assert_eq!(0, rows % 16);
     assert_eq!(0, input.len() % rows);
@@ -16,7 +22,6 @@ pub fn transpose_bitmatrix(input: &[u8], rows: usize) -> Vec<u8> {
         cols % 8,
         "Number of bitmatrix columns must be divisable by 8. columns: {cols}"
     );
-    let mut output = vec![0; input.len()];
 
     let inp = |x: usize, y: usize| -> usize { x * cols / 8 + y / 8 };
     let out = |x: usize, y: usize| -> usize { y * rows / 8 + x / 8 };
@@ -66,7 +71,6 @@ pub fn transpose_bitmatrix(input: &[u8], rows: usize) -> Vec<u8> {
             row += 16;
         }
     }
-    output
 }
 
 #[cfg(test)]

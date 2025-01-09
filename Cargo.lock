@@ -1710,6 +1710,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_core 0.6.4",
  "serde",
+ "subtle",
  "tracing",
  "tracing-subscriber",
  "wide",
@@ -1740,6 +1741,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bitvec",
+ "bytemuck",
  "criterion",
  "curve25519-dalek",
  "futures",

@@ -5,12 +5,13 @@ version = "0.1.0"
 
 [dependencies]
 bitvec.workspace = true
+bytemuck.workspace = true
 curve25519-dalek = { version = "4.1.3", features = ["rand_core", "serde"] }
 futures.workspace = true
 rand.workspace = true
 seec-core.workspace = true
 seec-net.workspace = true
-subtle = "2.6.1"
+subtle.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

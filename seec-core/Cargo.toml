@@ -14,6 +14,7 @@ hybrid-array = { version = "0.2.3", features = ["bytemuck"] }
 rand.workspace = true
 rand_core.workspace = true
 serde = { workspace = true, features = ["derive"] }
+subtle.workspace = true
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 wide = { version = "0.7.32", features = ["serde"] }

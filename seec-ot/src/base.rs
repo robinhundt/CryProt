@@ -100,7 +100,7 @@ impl RotReceiver for SimplestOt {
 
     #[allow(non_snake_case)]
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
-    async fn receive(&mut self, choices: &BitSlice) -> Result<Vec<Block>, Self::Error> {
+    async fn receive(&mut self, choices: &[Choice]) -> Result<Vec<Block>, Self::Error> {
         let (mut send, mut recv) = self.conn.byte_stream().await?;
         let (A, commitment): (RistrettoPoint, [u8; 32]) = {
             let mut recv_m1 = recv.as_stream();
@@ -113,8 +113,7 @@ impl RotReceiver for SimplestOt {
                 let b = Scalar::random(&mut self.rng);
                 let B_0 = RISTRETTO_BASEPOINT_TABLE * &b;
                 let B_1 = B_0 + A;
-                let B_choice =
-                    RistrettoPoint::conditional_select(&B_0, &B_1, Choice::from(u8::from(*choice)));
+                let B_choice = RistrettoPoint::conditional_select(&B_0, &B_1, *choice);
                 (b, B_choice)
             })
             .unzip();
@@ -163,7 +162,7 @@ mod tests {
     use seec_net::testing::local_conn;
 
     use super::SimplestOt;
-    use crate::{RotReceiver, RotSender};
+    use crate::{random_choices, RotReceiver, RotSender};
 
     #[tokio::test]
     async fn base_rot() -> Result<()> {
@@ -172,16 +171,14 @@ mod tests {
         let mut rng1 = StdRng::seed_from_u64(42);
         let rng2 = StdRng::seed_from_u64(42 * 42);
         let count = 128;
-        let mut choices = bitvec!(0; count);
-
-        rng1.fill(choices.as_raw_mut_slice());
+        let choices = random_choices(count, &mut rng1);
 
         let mut sender = SimplestOt::new_with_rng(c1, rng1);
         let mut receiver = SimplestOt::new_with_rng(c2, rng2);
         let (s_ot, r_ot) = tokio::try_join!(sender.send(count), receiver.receive(&choices))?;
 
         for ((r, s), c) in r_ot.into_iter().zip(s_ot).zip(choices) {
-            assert_eq!(r, s[c as usize])
+            assert_eq!(r, s[c.unwrap_u8() as usize])
         }
         Ok(())
     }

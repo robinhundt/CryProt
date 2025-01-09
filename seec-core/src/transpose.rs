@@ -1,3 +1,5 @@
+use std::{arch::x86_64::_mm_setr_epi8, mem::transmute};
+
 use wide::{i64x2, i8x16};
 
 pub fn transpose_bitmatrix(input: &[u8], rows: usize) -> Vec<u8> {
@@ -23,34 +25,13 @@ pub fn transpose_bitmatrix_into(input: &[u8], output: &mut [u8], rows: usize) {
         "Number of bitmatrix columns must be divisable by 8. columns: {cols}"
     );
 
-    let inp = |x: usize, y: usize| -> usize { x * cols / 8 + y / 8 };
-    let out = |x: usize, y: usize| -> usize { y * rows / 8 + x / 8 };
-
     unsafe {
         let mut msbs = [0_u8; 4];
         let mut row: usize = 0;
         while row <= rows - 16 {
             let mut col = 0;
             while col < cols {
-                // get col byte of row to row + 15
-                let mut v = i8x16::from([
-                    *input.get_unchecked(inp(row, col)) as i8,
-                    *input.get_unchecked(inp(row + 1, col)) as i8,
-                    *input.get_unchecked(inp(row + 2, col)) as i8,
-                    *input.get_unchecked(inp(row + 3, col)) as i8,
-                    *input.get_unchecked(inp(row + 4, col)) as i8,
-                    *input.get_unchecked(inp(row + 5, col)) as i8,
-                    *input.get_unchecked(inp(row + 6, col)) as i8,
-                    *input.get_unchecked(inp(row + 7, col)) as i8,
-                    *input.get_unchecked(inp(row + 8, col)) as i8,
-                    *input.get_unchecked(inp(row + 9, col)) as i8,
-                    *input.get_unchecked(inp(row + 10, col)) as i8,
-                    *input.get_unchecked(inp(row + 11, col)) as i8,
-                    *input.get_unchecked(inp(row + 12, col)) as i8,
-                    *input.get_unchecked(inp(row + 13, col)) as i8,
-                    *input.get_unchecked(inp(row + 14, col)) as i8,
-                    *input.get_unchecked(inp(row + 15, col)) as i8,
-                ]);
+                let mut v = load_bytes(input, row, col, cols);
                 // reverse iterator because we start writing the msb of each byte, then shift
                 // left for i = 0, we write the previous lsb
                 (0..8).rev().for_each(|i| {
@@ -58,8 +39,8 @@ pub fn transpose_bitmatrix_into(input: &[u8], output: &mut [u8], rows: usize) {
                     msbs = v.move_mask().to_le_bytes();
                     // dbg!(msbs);
                     // write msbs to output at transposed position
-                    *output.get_unchecked_mut(out(row, col + i)) = msbs[0];
-                    *output.get_unchecked_mut(out(row, col + i) + 1) = msbs[1];
+                    *output.get_unchecked_mut(out(row, col + i, rows)) = msbs[0];
+                    *output.get_unchecked_mut(out(row, col + i, rows) + 1) = msbs[1];
                     // SAFETY: u8x16 and i64x2 have the same layout
                     //  we need to convert cast it, because there is no shift impl for u8x16
                     let v_i64x2 = &mut v as *mut _ as *mut i64x2;
@@ -69,6 +50,68 @@ pub fn transpose_bitmatrix_into(input: &[u8], output: &mut [u8], rows: usize) {
                 col += 8;
             }
             row += 16;
+        }
+    }
+}
+
+#[inline]
+fn inp(x: usize, y: usize, cols: usize) -> usize {
+    x * cols / 8 + y / 8
+}
+#[inline]
+fn out(x: usize, y: usize, rows: usize) -> usize {
+    y * rows / 8 + x / 8
+}
+
+#[inline]
+// get col byte of row to row + 15
+unsafe fn load_bytes(b: &[u8], row: usize, col: usize, cols: usize) -> i8x16 {
+    unsafe {
+        // if we have sse2 we use _mm_setr_epi8 and transmute to convert bytes
+        // faster than from impl
+        #[cfg(target_feature = "sse2")]
+        {
+            let v = _mm_setr_epi8(
+                *b.get_unchecked(inp(row, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 1, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 2, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 3, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 4, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 5, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 6, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 7, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 8, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 9, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 10, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 11, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 12, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 13, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 14, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 15, col, cols)) as i8,
+            );
+            transmute(v)
+        }
+        #[cfg(not(target_feature = "sse2"))]
+        {
+            let bytes = [
+                *b.get_unchecked(inp(row, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 1, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 2, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 3, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 4, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 5, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 6, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 7, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 8, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 9, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 10, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 11, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 12, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 13, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 14, col, cols)) as i8,
+                *b.get_unchecked(inp(row + 15, col, cols)) as i8,
+            ];
+            i8x16::from(bytes)
         }
     }
 }

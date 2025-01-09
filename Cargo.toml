@@ -19,3 +19,7 @@ thiserror = "2.0.9"
 tokio = "1.37.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+
+[profile.profiling]
+debug = true
+inherits = "release"

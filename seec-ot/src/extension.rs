@@ -87,7 +87,9 @@ impl RotSender for OtExtensionSender {
         let zero_row = vec![0_u8; cols_byte];
         let mut row_iter = v_mat.chunks_exact_mut(cols_byte);
         let mut choice_iter = self.base_choices.iter();
+        let mut rows_received = 0;
         while let Some(recv_row) = recv.next().await {
+            rows_received += 1;
             let recv_row = recv_row.unwrap();
             let r = choice_iter.next().unwrap();
             let v_row = row_iter.next().unwrap();
@@ -98,6 +100,9 @@ impl RotSender for OtExtensionSender {
                 &recv_row
             };
             xor_inplace(v_row, &xor_row);
+            if rows_received == BASE_OT_COUNT {
+                break;
+            }
         }
         let mut v_mat_blocks = vec![Block::ZERO; v_mat.len() / mem::size_of::<Block>()];
         transpose_bitmatrix_into(
@@ -198,6 +203,8 @@ fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use rand::{rngs::StdRng, SeedableRng};
     use seec_net::testing::local_conn;
 
@@ -215,7 +222,6 @@ mod tests {
         let choices = random_choices(COUNT, &mut rng2);
         let mut sender = OtExtensionSender::new_with_rng(c1, rng1);
         let mut receiver = OtExtensionReceiver::new_with_rng(c2, rng2);
-
         let (send_ots, recv_ots) =
             tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
         for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {

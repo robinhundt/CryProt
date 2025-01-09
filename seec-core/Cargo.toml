@@ -3,6 +3,9 @@ edition = "2021"
 name = "seec-core"
 version = "0.1.0"
 
+[lib]
+bench = false
+
 [features]
 __testing = ["dep:tracing", "dep:tracing-subscriber"]
 

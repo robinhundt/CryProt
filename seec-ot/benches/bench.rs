@@ -15,6 +15,7 @@ use tokio::runtime::Handle;
 fn criterion_benchmark(c: &mut Criterion) {
     init_bench_tracing();
     let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .unwrap();
@@ -43,9 +44,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         )
     });
 
-    let count = 100 * 1024;
-
-    c.bench_function("100 * 1024 extension OTs", |b| {
+    let count = 2_usize.pow(24);
+    c.bench_function("2**24 extension OTs", |b| {
         b.to_async(&rt).iter_batched(
             || {
                 let mut rng1 = StdRng::seed_from_u64(42);

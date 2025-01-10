@@ -1,3 +1,5 @@
+use std::mem;
+
 /// RNG based on AES in CTR-like mode.
 ///
 /// This implementation is based on the implementation given in the
@@ -27,7 +29,19 @@ impl RngCore for AesRng {
     }
     #[inline]
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        self.0.fill_bytes(dest)
+        let rest_len = dest.len().next_multiple_of(mem::size_of::<aes::Block>()) - dest.len();
+        let block_len = dest.len() - rest_len;
+        let (block_bytes, rest_bytes) = dest.split_at_mut(block_len);
+        // fast path so we don't unnecessarily copy u32 from BlockRngCore::generate into
+        // dest
+        let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(block_bytes);
+        for block in blocks.iter_mut() {
+            *block = bytemuck::cast(self.0.core.state);
+            self.0.core.state += 1;
+        }
+        self.0.core.aes.encrypt_blocks(blocks);
+        // handle the tail
+        self.0.fill_bytes(rest_bytes)
     }
     #[inline]
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
@@ -89,20 +103,46 @@ impl std::fmt::Debug for AesRngCore {
 
 impl BlockRngCore for AesRngCore {
     type Item = u32;
-    // This is equivalent to `[Block; 8]`, but we need to use `u32` to be
-    // compatible with `RngCore`.
-    type Results = [u32; 32];
+    // This is equivalent to `[Block; 9]`
+    type Results = hidden::ParBlockWrapper;
 
-    // Compute `E(state)` eight times, where `state` is a counter.
+    // Compute `E(state)` nine times, where `state` is a counter.
     #[inline]
     fn generate(&mut self, results: &mut Self::Results) {
-        let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(results);
+        let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(results.as_mut());
         blocks.iter_mut().for_each(|blk| {
-            // aes::Block is a type alias to Array, but type aliases can't be used as constructors
+            // aes::Block is a type alias to Array, but type aliases can't be used as
+            // constructors
             *blk = aes::cipher::Array(self.state.to_le_bytes());
             self.state += 1;
         });
         self.aes.encrypt_blocks(blocks);
+    }
+}
+
+mod hidden {
+    /// Equivalent to [aes::Block; 9] (which is the parralel block size for the
+    /// aes-ni backend). Since size 36 arrays don't impl Default we write a
+    /// wrapper.
+    #[derive(Copy, Clone)]
+    pub struct ParBlockWrapper([u32; 36]);
+
+    impl Default for ParBlockWrapper {
+        fn default() -> Self {
+            Self([0; 36])
+        }
+    }
+
+    impl AsMut<[u32]> for ParBlockWrapper {
+        fn as_mut(&mut self) -> &mut [u32] {
+            &mut self.0
+        }
+    }
+
+    impl AsRef<[u32]> for ParBlockWrapper {
+        fn as_ref(&self) -> &[u32] {
+            &self.0
+        }
     }
 }
 

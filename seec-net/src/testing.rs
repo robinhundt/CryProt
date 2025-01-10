@@ -15,7 +15,8 @@ static KEY_PEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/
 pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
     let max_streams = 1 << 59;
     let limits = Limits::new()
-        .with_max_send_buffer_size(1024 * 1024 * 10)?
+        // TODO sensible send buffer size
+        .with_max_send_buffer_size(1024 * 1024 * 300)?
         .with_max_open_local_unidirectional_streams(max_streams)?
         .with_max_open_remote_unidirectional_streams(max_streams)?;
     let mut server: Server = Server::builder()

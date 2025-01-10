@@ -88,8 +88,12 @@ fn criterion_benchmark(c: &mut Criterion) {
                 // let t1 = tokio::spawn(async move { sender.send(count).await });
                 // let t2 = tokio::spawn(async move { receiver.receive(&choices).await });
                 // let (a, b) = tokio::try_join!(t1, t2).unwrap();
-                a.unwrap().unwrap();
-                b.unwrap().unwrap();
+                let send_ots = a.unwrap().unwrap();
+                let recv_ots = b.unwrap().unwrap();
+                // TODO remove this or find a way that it doesn't impact benchmarking
+                // for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
+                //     assert_eq!(r, s[c.unwrap_u8() as usize]);
+                // }
             },
             BatchSize::SmallInput,
         )

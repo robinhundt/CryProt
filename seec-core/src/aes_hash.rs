@@ -8,8 +8,13 @@ use aes::{
     cipher::{BlockCipherEncrypt, Key, KeyInit},
     Aes128,
 };
+use bytemuck::{AnyBitPattern, Pod};
+use hybrid_array::{sizes::U16, Array};
 
-use crate::Block;
+use crate::{
+    utils::{allocate_zeroed_vec, xor_inplace},
+    Block,
+};
 
 pub struct AesHash {
     aes: Aes128,
@@ -37,19 +42,41 @@ impl AesHash {
     ///
     /// Warning: only secure in semi-honest setting!
     /// See <https://eprint.iacr.org/2019/074> for details.
-    pub fn cr_hash_blocks<const N: usize>(&self, x: &[Block; N]) -> [Block; N] {
-        let mut blocks = x.map(|blk| blk.into());
+    pub fn cr_hash_blocks<const N: usize>(&self, x: &[Block; N]) -> [Block; N]
+    where
+        [Block; N]: Pod,
+        [aes::Block; N]: Pod,
+    {
+        let mut blocks: [aes::Block; N] = bytemuck::cast(*x);
         self.aes.encrypt_blocks(&mut blocks);
-
-        let mut blocks = blocks.map(|enc_blk| enc_blk.into());
-        for (enc_x, x) in blocks.iter_mut().zip(x) {
-            *enc_x ^= *x;
-        }
+        let mut blocks: [Block; N] = bytemuck::cast(blocks);
+        xor_inplace(&mut blocks, x);
         blocks
     }
 
+    /// Compute the correlation robust hashes of multiple blocks.
+    ///
+    /// Warning: only secure in semi-honest setting!
+    /// See <https://eprint.iacr.org/2019/074> for details.
+    ///
+    /// # Panics
+    /// If N != out.len()
+    pub fn cr_hash_blocks_b2b<const N: usize>(&self, inp: &[Block; N], out: &mut [Block])
+    where
+        [Block; N]: Pod,
+        [aes::Block; N]: Pod,
+    {
+        assert_eq!(N, out.len());
+        let inp_aes: &[aes::Block; N] = bytemuck::cast_ref(inp);
+        let out_aes: &mut [aes::Block] = bytemuck::cast_slice_mut(out);
+        self.aes
+            .encrypt_blocks_b2b(inp_aes, out_aes)
+            .expect("buffer have equal size");
+        xor_inplace(out, inp);
+    }
+
     pub fn cr_hash_slice_mut(&self, x: &mut [Block]) {
-        let mut encrypted = vec![Default::default(); x.len()];
+        let mut encrypted = allocate_zeroed_vec(x.len());
         self.aes
             .encrypt_blocks_b2b(bytemuck::cast_slice_mut(x), &mut encrypted)
             .unwrap();

@@ -13,10 +13,12 @@ bytemuck.workspace = true
 curve25519-dalek = { version = "4.1.3", features = ["rand_core", "serde"] }
 futures.workspace = true
 rand.workspace = true
+rayon = "1.10.0"
 seec-core.workspace = true
 seec-net.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 tracing.workspace = true
 
 [dev-dependencies]

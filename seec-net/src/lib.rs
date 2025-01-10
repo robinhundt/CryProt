@@ -77,6 +77,7 @@ pub struct StreamManager {
 /// [`Connection::byte_stream`] and [`Connection::stream`] are tied to their
 /// connection. Streams created with the same [`Id`] but for different
 /// connections will not conflict with each other.
+#[derive(Debug)]
 pub struct Connection {
     cids: Vec<ConnectionId>,
     next_cid: Arc<AtomicU32>,
@@ -138,6 +139,7 @@ pin_project! {
     }
 }
 
+#[derive(Debug)]
 enum Cmd {
     NewStream {
         uid: UniqueId,
@@ -207,12 +209,14 @@ impl StreamManager {
                     }
                 }
                 Some(cmd) = self.cmd_recv.recv() => {
+                    debug!(?cmd, "received cmd");
                     match cmd {
                         Cmd::NewStream {uid, stream_return} => {
                             if let Some(accepted) = self.accepted.remove(&uid) {
                                 if stream_return.send(accepted).is_err() {
                                     debug!("accepted remote stream but local receiver is closed");
                                 }
+                                debug!("sending new stream to receiver");
                                 continue;
                             }
                             match self.pending.entry(uid) {
@@ -228,6 +232,7 @@ impl StreamManager {
                                 debug!("accepted remote stream but local receiver is closed");
                                }
                             } else {
+                                debug!("accepted stream but no pending");
                                 self.accepted.insert(uid, (stream, bytes_read));
                             }
                         }
@@ -266,6 +271,7 @@ impl Connection {
     /// is paired with the n'th call to `sub_connection` on the corresponding
     /// [`Connection`] of the other party. Creating a sub-connection results
     /// in no immediate communication and is a fast synchronous operation.
+    #[tracing::instrument(level = Level::DEBUG, skip(self), ret)]
     pub fn sub_connection(&mut self) -> Self {
         let cid = self.next_cid.fetch_add(1, Ordering::Relaxed);
         let mut cids = self.cids.clone();
@@ -448,8 +454,8 @@ pub enum ParseUniqueIdError {
 }
 
 impl UniqueId {
-    fn new(cid: Vec<ConnectionId>, id: StreamId) -> Self {
-        Self { cids: cid, id }
+    fn new(cids: Vec<ConnectionId>, id: StreamId) -> Self {
+        Self { cids, id }
     }
 
     fn from_bytes(mut bytes: &[u8]) -> Result<Self, ParseUniqueIdError> {
@@ -490,7 +496,29 @@ impl UniqueId {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum StreamError {
+    #[error("unable to flush stream")]
+    Flush(#[source] s2n_quic::stream::Error),
+    #[error("unable to close stream")]
+    Close(#[source] s2n_quic::stream::Error),
+    #[error("unable to finish stream")]
+    Finish(#[source] s2n_quic::stream::Error),
+}
+
 impl SendStreamBytes {
+    pub async fn flush(&mut self) -> Result<(), StreamError> {
+        self.inner.flush().await.map_err(StreamError::Flush)
+    }
+
+    pub fn finish(&mut self) -> Result<(), StreamError> {
+        self.inner.finish().map_err(StreamError::Finish)
+    }
+
+    pub async fn close(&mut self) -> Result<(), StreamError> {
+        self.inner.close().await.map_err(StreamError::Close)
+    }
+
     pub fn as_stream<T: Serialize>(&mut self) -> TempSendStream<T> {
         let mut ld_codec = LengthDelimitedCodec::builder();
         // TODO what is a sensible max length?
@@ -596,7 +624,12 @@ mod tests {
 
     use anyhow::{Context, Result};
     use futures::{SinkExt, StreamExt};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use seec_core::test_utils::init_tracing;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        task::JoinSet,
+    };
+    use tracing::debug;
 
     use crate::{testing::local_conn, Id};
 
@@ -661,6 +694,35 @@ mod tests {
         c_send.write_all(c_send_buf).await?;
         let s_recv_buf = jh.await?;
         assert_eq!(c_send_buf, &s_recv_buf);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn many_parallel_byte_streams() -> Result<()> {
+        let _g = init_tracing();
+        let (mut c1, mut c2) = local_conn().await?;
+        let mut jhs = JoinSet::new();
+        for i in 0..128 {
+            let ((mut s, _), (_, mut r)) =
+                tokio::try_join!(c1.byte_stream(), c2.byte_stream()).unwrap();
+
+            let jh = tokio::spawn(async move {
+                let buf = vec![0; 40 * 1024 * 1024];
+                s.write_all(&buf).await.unwrap();
+                debug!("wrote buf {i}");
+            });
+            jhs.spawn(jh);
+            let jh = tokio::spawn(async move {
+                let mut buf = vec![0; 40 * 1024 * 1024];
+                r.read_exact(&mut buf).await.unwrap();
+                debug!("received buf {i}");
+            });
+            jhs.spawn(jh);
+        }
+        let res = jhs.join_all().await;
+        for res in res {
+            res.unwrap();
+        }
         Ok(())
     }
 

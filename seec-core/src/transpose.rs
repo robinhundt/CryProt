@@ -34,19 +34,23 @@ pub fn transpose_bitmatrix_into(input: &[u8], output: &mut [u8], rows: usize) {
                 let mut v = load_bytes(input, row, col, cols);
                 // reverse iterator because we start writing the msb of each byte, then shift
                 // left for i = 0, we write the previous lsb
-                (0..8).rev().for_each(|i| {
+                for i in (0..8).rev() {
                     // get msb of each byte
                     msbs = v.move_mask().to_le_bytes();
                     // dbg!(msbs);
-                    // write msbs to output at transposed position
-                    *output.get_unchecked_mut(out(row, col + i, rows)) = msbs[0];
-                    *output.get_unchecked_mut(out(row, col + i, rows) + 1) = msbs[1];
+                    // write msbs to output at transposed position as one i16
+                    let msb_i16 = i16::from_ne_bytes([msbs[0], msbs[1]]);
+                    let idx = out(row, col + i, rows) as isize;
+                    let out_ptr = output.as_mut_ptr().offset(idx) as *mut i16;
+                    // ptr is potentially unaligned
+                    out_ptr.write_unaligned(msb_i16);
+
                     // SAFETY: u8x16 and i64x2 have the same layout
                     //  we need to convert cast it, because there is no shift impl for u8x16
                     let v_i64x2 = &mut v as *mut _ as *mut i64x2;
                     // shift each byte by one to the left (by shifting it as two i64)
                     *v_i64x2 = *v_i64x2 << 1;
-                });
+                }
                 col += 8;
             }
             row += 16;
@@ -135,6 +139,7 @@ mod tests {
     }
 
     proptest! {
+        #[cfg(not(miri))]
         #[test]
         fn test_double_transpose((v, rows, cols) in arbitrary_bitmat(16 * 30, 16 * 30)) {
             let transposed = transpose_bitmatrix(&v, rows);
@@ -142,5 +147,15 @@ mod tests {
 
             prop_assert_eq!(v, double_transposed);
         }
+    }
+
+    #[test]
+    fn test_double_transpose_miri() {
+        let rows = 32;
+        let cols = 16;
+        let v = vec![0; rows * cols];
+        let transposed = transpose_bitmatrix(&v, rows);
+        let double_transposed = transpose_bitmatrix(&transposed, cols);
+        assert_eq!(v, double_transposed);
     }
 }

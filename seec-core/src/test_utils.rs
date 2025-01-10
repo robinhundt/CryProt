@@ -14,15 +14,14 @@ use tracing_subscriber::{fmt::format::FmtSpan, util::SubscriberInitExt, EnvFilte
 pub fn init_tracing() -> tracing::dispatcher::DefaultGuard {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+        .with_span_events(FmtSpan::NEW | FmtSpan::ACTIVE | FmtSpan::CLOSE)
         .with_test_writer()
         .set_default()
 }
 
-
 pub fn init_bench_tracing() {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
-        .with_span_events(FmtSpan::NEW | FmtSpan::CLOSE)
+        .with_span_events(FmtSpan::NEW | FmtSpan::ACTIVE | FmtSpan::CLOSE)
         .init();
 }

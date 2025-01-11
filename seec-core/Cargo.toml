@@ -14,6 +14,7 @@ aes = "0.9.0-pre.2"
 blake3 = { version = "1.5.5", features = ["traits-preview"] }
 bytemuck = { workspace = true, features = ["derive"] }
 hybrid-array = { version = "0.2.3", features = ["bytemuck"] }
+libc = "0.2.169"
 rand.workspace = true
 rand_core.workspace = true
 serde = { workspace = true, features = ["derive"] }

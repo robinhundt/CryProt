@@ -9,7 +9,7 @@ use rand::{rngs::StdRng, thread_rng, RngCore, SeedableRng};
 use seec_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
-    transpose::transpose_bitmatrix_into,
+    transpose::transpose_bitmatrix,
     utils::{allocate_zeroed_vec, xor_inplace, xor_inplace_elem},
     Block,
 };
@@ -26,7 +26,7 @@ use crate::{base::SimplestOt, random_choices, RotReceiver, RotSender};
 
 pub const BASE_OT_COUNT: usize = 128;
 
-const OT_BATCH_SIZE: usize = 2_usize.pow(22);
+const OT_BATCH_SIZE: usize = 2_usize.pow(20);
 
 pub struct OtExtensionSender {
     rng: StdRng,
@@ -104,7 +104,7 @@ impl RotSender for OtExtensionSender {
                 let v_mat = ch_r.recv().unwrap();
                 let mut v_mat_blocks =
                     allocate_zeroed_vec::<Block>(v_mat.len() / mem::size_of::<Block>());
-                transpose_bitmatrix_into(
+                transpose_bitmatrix(
                     &v_mat,
                     bytemuck::cast_slice_mut(&mut v_mat_blocks),
                     BASE_OT_COUNT,
@@ -264,7 +264,7 @@ impl RotReceiver for OtExtensionReceiver {
 
         let mut output = allocate_zeroed_vec(t_mat.len() / mem::size_of::<Block>());
         let output_bytes = bytemuck::cast_slice_mut(&mut output);
-        transpose_bitmatrix_into(&t_mat, output_bytes, BASE_OT_COUNT);
+        transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
         FIXED_KEY_HASH.cr_hash_slice_mut(&mut output);
         Ok(output)
     }

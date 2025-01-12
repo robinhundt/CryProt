@@ -13,21 +13,35 @@ static KEY_PEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/
 
 #[tracing::instrument]
 pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
+    // TODO sensible send buffer sizes and limits
+    const MiB: usize = 1024 * 1024;
     let max_streams = 1 << 59;
     let limits = Limits::new()
-        // TODO sensible send buffer size
-        .with_max_send_buffer_size(1024 * 1024 * 300)?
+        .with_max_send_buffer_size(300 * MiB as u32)?
         .with_max_open_local_unidirectional_streams(max_streams)?
         .with_max_open_remote_unidirectional_streams(max_streams)?;
+
+    let addr = "127.0.0.1:0".parse()?;
+    let io = || {
+        s2n_quic::provider::io::Default::builder()
+            .with_receive_address(addr)?
+            .with_max_mtu(9000)?
+            .with_recv_buffer_size(200 * MiB)?
+            .with_send_buffer_size(200 * MiB)?
+            .with_internal_recv_buffer_size(200 * MiB)?
+            .with_internal_send_buffer_size(200 * MiB)?
+            .build()
+    };
+
     let mut server: Server = Server::builder()
         .with_tls((CERT_PEM, KEY_PEM))?
-        .with_io("127.0.0.1:0")?
+        .with_io(io()?)?
         .with_limits(limits)?
         .start()?;
     let server_port = server.local_addr()?.port();
     let client = Client::builder()
         .with_tls(CERT_PEM)?
-        .with_io("127.0.0.1:0")?
+        .with_io(io()?)?
         .with_limits(limits)?
         .start()?;
 

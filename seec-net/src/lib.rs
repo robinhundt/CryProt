@@ -278,7 +278,7 @@ impl Connection {
         cids.push(ConnectionId(cid));
         Self {
             cids,
-            next_cid: self.next_cid.clone(),
+            next_cid: Arc::new(AtomicU32::new(0)),
             handle: self.handle.clone(),
             cmd: self.cmd.clone(),
             next_implicit_id: 0,

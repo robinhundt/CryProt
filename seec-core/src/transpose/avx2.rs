@@ -1,5 +1,6 @@
 use std::{arch::x86_64::*, hint::unreachable_unchecked};
 
+#[inline(always)]
 unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
     unsafe {
         match shift {
@@ -13,6 +14,7 @@ unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
     }
 }
 
+#[inline(always)]
 unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
     unsafe {
         match shift {
@@ -28,7 +30,8 @@ unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
 
 // Transpose a 2^block_size_shift x 2^block_size_shift block within a larger
 // matrix Only handles first two rows out of every 2^block_rows_shift rows
-// in each block
+
+#[inline(always)] // in each block
 unsafe fn avx_transpose_block_iter1(
     in_out: *mut __m256i,
     block_size_shift: usize,
@@ -79,7 +82,7 @@ unsafe fn avx_transpose_block_iter1(
     *y = _mm256_xor_si256(*y, _mm256_srli_epi64_var_shift(diff, 1 << block_size_shift));
 }
 
-// Process a range of rows in the matrix
+#[inline(always)] // Process a range of rows in the matrix
 unsafe fn avx_transpose_block_iter2(
     in_out: *mut __m256i,
     block_size_shift: usize,
@@ -95,7 +98,7 @@ unsafe fn avx_transpose_block_iter2(
     }
 }
 
-// Main transpose function for blocks within the matrix
+#[inline(always)] // Main transpose function for blocks within the matrix
 unsafe fn avx_transpose_block(
     in_out: *mut __m256i,
     block_size_shift: usize,

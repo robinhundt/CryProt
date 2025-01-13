@@ -1,5 +1,5 @@
 use std::{
-    alloc::{alloc_zeroed, Layout},
+    alloc::{alloc, alloc_zeroed, Layout},
     mem,
     ops::BitXorAssign,
 };
@@ -25,6 +25,7 @@ pub fn allocate_zeroed_vec<T: Zeroable>(len: usize) -> Vec<T> {
         let align = mem::align_of::<T>();
         let layout = Layout::from_size_align(size, align).expect("len too large");
         let zeroed = alloc_zeroed(layout);
+
         // Safety (see https://doc.rust-lang.org/stable/std/vec/struct.Vec.html#method.from_raw_parts):
         // - zeroed ptr was allocated via global allocator
         // - zeroed was allocated with exact alignment of T

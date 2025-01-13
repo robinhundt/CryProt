@@ -20,13 +20,13 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tracing::{debug, Level};
+use tracing::Level;
 
 use crate::{base::SimplestOt, random_choices, RotReceiver, RotSender};
 
 pub const BASE_OT_COUNT: usize = 128;
 
-const OT_BATCH_SIZE: usize = 2_usize.pow(20);
+const OT_BATCH_SIZE: usize = 2_usize.pow(16);
 
 pub struct OtExtensionSender {
     rng: StdRng,
@@ -99,11 +99,11 @@ impl RotSender for OtExtensionSender {
 
         let jh = thread::spawn(move || {
             let mut ots = allocate_zeroed_vec(count);
+            let mut v_mat_blocks =
+                allocate_zeroed_vec::<Block>(OT_BATCH_SIZE);
 
-            for (batch, ot_batch) in (0..batches).zip(ots.chunks_exact_mut(OT_BATCH_SIZE)) {
+            for ot_batch in ots.chunks_exact_mut(OT_BATCH_SIZE) {
                 let v_mat = ch_r.recv().unwrap();
-                let mut v_mat_blocks =
-                    allocate_zeroed_vec::<Block>(v_mat.len() / mem::size_of::<Block>());
                 transpose_bitmatrix(
                     &v_mat,
                     bytemuck::cast_slice_mut(&mut v_mat_blocks),
@@ -156,17 +156,11 @@ impl RotSender for OtExtensionSender {
 
             let mut recv_row = vec![0; cols_byte_batch];
 
-            // TODO pipeline implementation so that transpose and hash can be done
-            // for first batch of ots while waiting on receiver
-
             for i in 0..BASE_OT_COUNT {
                 let v_row = row_iter.next().unwrap();
                 self.base_rngs[i].fill_bytes(v_row);
                 let r = self.base_choices[i];
-                // let recv_row = ch_r.recv().await.unwrap();
-                debug!("waiting row {}", recv_row.len());
                 recv.read_exact(&mut recv_row).await.unwrap();
-                debug!("received row {}", recv_row.len());
                 // The following is a best-effort constant time implementation
                 let xor_row = if r.unwrap_u8() == 0 {
                     &zero_row
@@ -230,42 +224,49 @@ impl RotReceiver for OtExtensionReceiver {
         let cols_byte_all = count / 8;
         let cols_byte_batch = OT_BATCH_SIZE / 8;
         // let mut t_mat = vec![0_u8; BASE_OT_COUNT * cols_byte];
-        let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_all];
 
         let choice_vec = choices_to_u8_vec(choices);
-        let (ch_s, mut ch_r) = mpsc::unbounded_channel::<Vec<u8>>();
         let mut sub_conn = self.conn.sub_connection();
-        tokio::spawn(async move {
-            let (mut send, _) = sub_conn.byte_stream().await.unwrap();
-            while let Some(row) = ch_r.recv().await {
-                send.write_all(&row).await.unwrap();
-                debug!("send row {} len", row.len());
-                // send.flush().await.unwrap(); // todo this panics .unwrap();
-                // debug!("flushed");
+
+        let (ch_s, mut ch_r) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (ret_s, ret_r) = oneshot::channel();
+
+        let mut base_rngs = mem::take(&mut self.base_rngs);
+        thread::spawn(move || {
+            let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_all];
+
+            for (batch, choice_batch) in (0..batches).zip(choice_vec.chunks_exact(cols_byte_batch))
+            {
+                for (row, [rng1, rng2]) in t_mat
+                    .chunks_exact_mut(cols_byte_batch)
+                    .skip(batch)
+                    .step_by(batches)
+                    .zip(&mut base_rngs)
+                {
+                    let mut send_row = vec![0_u8; cols_byte_batch];
+                    rng1.fill_bytes(row);
+                    rng2.fill_bytes(&mut send_row);
+                    for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
+                        *v2 ^= *v1 ^ *choices;
+                    }
+                    ch_s.send(send_row).unwrap();
+                }
             }
+
+            let mut output = allocate_zeroed_vec(t_mat.len() / mem::size_of::<Block>());
+            let output_bytes = bytemuck::cast_slice_mut(&mut output);
+            transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
+            FIXED_KEY_HASH.cr_hash_slice_mut(&mut output);
+            ret_s.send((output, base_rngs)).unwrap();
         });
 
-        for (batch, choice_batch) in (0..batches).zip(choice_vec.chunks_exact(cols_byte_batch)) {
-            for (row, [rng1, rng2]) in t_mat
-                .chunks_exact_mut(cols_byte_batch)
-                .skip(batch)
-                .step_by(batches)
-                .zip(&mut self.base_rngs)
-            {
-                let mut send_row = vec![0_u8; cols_byte_batch];
-                rng1.fill_bytes(row);
-                rng2.fill_bytes(&mut send_row);
-                for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
-                    *v2 ^= *v1 ^ *choices;
-                }
-                ch_s.send(send_row).unwrap();
-            }
+        let (mut send, _) = sub_conn.byte_stream().await.unwrap();
+        while let Some(row) = ch_r.recv().await {
+            send.write_all(&row).await.unwrap();
         }
 
-        let mut output = allocate_zeroed_vec(t_mat.len() / mem::size_of::<Block>());
-        let output_bytes = bytemuck::cast_slice_mut(&mut output);
-        transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
-        FIXED_KEY_HASH.cr_hash_slice_mut(&mut output);
+        let (output, base_rngs) = ret_r.await.unwrap();
+        self.base_rngs = base_rngs;
         Ok(output)
     }
 }

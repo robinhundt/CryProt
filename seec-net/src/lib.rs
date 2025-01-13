@@ -620,7 +620,7 @@ impl AsyncRead for ReceiveStreamBytes {
 
 #[cfg(test)]
 mod tests {
-    use std::u8;
+    use std::{time::Duration, u8};
 
     use anyhow::{Context, Result};
     use futures::{SinkExt, StreamExt};
@@ -628,6 +628,7 @@ mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinSet,
+        time::{sleep, Sleep},
     };
     use tracing::debug;
 
@@ -702,18 +703,18 @@ mod tests {
         let _g = init_tracing();
         let (mut c1, mut c2) = local_conn().await?;
         let mut jhs = JoinSet::new();
-        for i in 0..128 {
+        for i in 0..10 {
             let ((mut s, _), (_, mut r)) =
                 tokio::try_join!(c1.byte_stream(), c2.byte_stream()).unwrap();
 
             let jh = tokio::spawn(async move {
-                let buf = vec![0; 40 * 1024 * 1024];
+                let buf = vec![0; 200 * 1024 * 1024];
                 s.write_all(&buf).await.unwrap();
                 debug!("wrote buf {i}");
             });
             jhs.spawn(jh);
             let jh = tokio::spawn(async move {
-                let mut buf = vec![0; 40 * 1024 * 1024];
+                let mut buf = vec![0; 200 * 1024 * 1024];
                 r.read_exact(&mut buf).await.unwrap();
                 debug!("received buf {i}");
             });

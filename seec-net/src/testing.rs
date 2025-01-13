@@ -17,7 +17,7 @@ pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
     const MiB: usize = 1024 * 1024;
     let max_streams = 1 << 59;
     let limits = Limits::new()
-        .with_max_send_buffer_size(300 * MiB as u32)?
+        .with_max_send_buffer_size(12 * MiB as u32)?
         .with_max_open_local_unidirectional_streams(max_streams)?
         .with_max_open_remote_unidirectional_streams(max_streams)?;
 
@@ -26,10 +26,6 @@ pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
         s2n_quic::provider::io::Default::builder()
             .with_receive_address(addr)?
             .with_max_mtu(9000)?
-            .with_recv_buffer_size(200 * MiB)?
-            .with_send_buffer_size(200 * MiB)?
-            .with_internal_recv_buffer_size(200 * MiB)?
-            .with_internal_send_buffer_size(200 * MiB)?
             .build()
     };
 

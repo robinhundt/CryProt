@@ -13,6 +13,9 @@ use rand_core::block::{BlockRng, BlockRngCore};
 
 use crate::Block;
 
+// TODO i think softspoken ot has some implementation performance optimizations
+// see sect 7 https://eprint.iacr.org/2022/192.pdf
+
 /// This uses AES in a counter-mode-esque way, but with the counter always
 /// starting at zero. When used as a PRNG this is okay [TODO: citation?].
 #[derive(Clone, Debug)]

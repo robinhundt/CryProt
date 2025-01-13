@@ -1,12 +1,12 @@
 use std::time::Instant;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use seec_core::test_utils::init_bench_tracing;
 use seec_net::testing::local_conn;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     join,
 };
-use seec_core::test_utils::init_bench_tracing;
 
 fn criterion_benchmark(c: &mut Criterion) {
     init_bench_tracing();
@@ -116,13 +116,11 @@ fn criterion_benchmark(c: &mut Criterion) {
             })
         },
     );
-    drop(g);
 
     let len = 10 * KB * KB;
     let buf = vec![0x42_u8; len];
     let buf = &buf;
     let (mut server, mut client) = rt.block_on(local_conn()).unwrap();
-    let mut g = c.benchmark_group("throughput");
     g.throughput(Throughput::Bytes(buf.len() as u64));
     g.bench_function(
         BenchmarkId::new("one way", format!("{} MiB", len / KB / KB)),
@@ -158,10 +156,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             })
         },
     );
-    drop(g);
 
     let (mut server, mut client) = rt.block_on(local_conn()).unwrap();
-    let mut g = c.benchmark_group("throughput");
     g.throughput(Throughput::Bytes(buf.len() as u64 * 2));
     g.bench_function(
         BenchmarkId::new("one way parallel", format!("{} MiB", len / KB / KB)),

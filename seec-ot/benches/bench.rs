@@ -1,4 +1,7 @@
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use bitvec::bitvec;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
@@ -17,7 +20,7 @@ use tokio::{
 
 fn create_mt_runtime(threads: usize) -> Runtime {
     runtime::Builder::new_multi_thread()
-        .worker_threads(4)
+        .worker_threads(threads)
         .enable_all()
         .build()
         .unwrap()
@@ -51,98 +54,96 @@ fn criterion_benchmark(c: &mut Criterion) {
         )
     });
 
-    let rt1 = create_mt_runtime(2);
-    let rt2 = create_mt_runtime(2);
-
     let count = 2_usize.pow(24);
     c.bench_function("2**24 extension OTs", |b| {
-        b.iter_batched(
-            || {
-                let mut rng1 = StdRng::seed_from_u64(42);
-                let rng2 = StdRng::seed_from_u64(42 * 42);
-                let mut choices = random_choices(count, &mut rng1);
-                let mut sender = OtExtensionSender::new_with_rng(c1.sub_connection(), rng1);
-                let mut receiver = OtExtensionReceiver::new_with_rng(c2.sub_connection(), rng2);
-                let handle = rt.handle();
-                thread::scope(|s| {
-                    s.spawn(|| {
-                        handle
-                            .block_on(async {
-                                tokio::try_join!(sender.do_base_ots(), receiver.do_base_ots())
-                            })
-                            .unwrap();
-                    });
-                });
-                (sender, receiver, choices)
-            },
-            |(mut sender, mut receiver, choices)| {
-                let (a, b) = thread::scope(|s| {
-                    let a = s.spawn(|| rt1.block_on(sender.send(count)));
-                    let b = s.spawn(|| rt2.block_on(receiver.receive(&choices)));
-                    (a.join(), b.join())
-                });
-                let send_ots = a.unwrap().unwrap();
-                let recv_ots = b.unwrap().unwrap();
-            },
-            BatchSize::SmallInput,
-        )
-    });
+        b.to_async(&rt).iter_custom(|iters| {
+            let mut c11 = c1.sub_connection();
+            let mut c22 = c2.sub_connection();
 
-    let rt3 = create_mt_runtime(2);
-    let rt4 = create_mt_runtime(2);
+            async move {
+                let mut duration = Duration::ZERO;
+                for _ in 0..iters {
+                    // setup not included in duration
+                    let (mut sender, mut receiver, choices) = {
+                        let mut rng1 = StdRng::seed_from_u64(42);
+                        let rng2 = StdRng::seed_from_u64(42 * 42);
+                        let choices = random_choices(count, &mut rng1);
+                        let mut sender =
+                            OtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
+                        let mut receiver =
+                            OtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
+                        tokio::try_join!(sender.do_base_ots(), receiver.do_base_ots()).unwrap();
+                        (sender, receiver, choices)
+                    };
+                    let now = Instant::now();
+                    let (a, b) = tokio::try_join!(
+                        tokio::spawn(async move { sender.send(count).await }),
+                        tokio::spawn(async move { receiver.receive(&choices).await })
+                    )
+                    .unwrap();
+                    duration += now.elapsed();
+                    a.unwrap();
+                    b.unwrap();
+                }
+                duration
+            }
+        })
+    });
 
     let count = 2_usize.pow(24);
     c.bench_function("2 parallel 2**24 extension OTs", |b| {
-        b.iter_batched(
-            || {
-                let mut rng1 = StdRng::seed_from_u64(42);
-                let rng2 = StdRng::seed_from_u64(42 * 42);
-                let mut choices = random_choices(count, &mut rng1);
-                let mut sender1 =
-                    OtExtensionSender::new_with_rng(c1.sub_connection(), rng1.clone());
-                let mut receiver1 =
-                    OtExtensionReceiver::new_with_rng(c2.sub_connection(), rng2.clone());
+        b.to_async(&rt).iter_custom(|iters| {
+            let mut c11 = c1.sub_connection();
+            let mut c22 = c2.sub_connection();
+            async move {
+                let mut duration = Duration::ZERO;
+                for _ in 0..iters {
+                    let (
+                        mut sender1,
+                        mut receiver1,
+                        mut sender2,
+                        mut receiver2,
+                        choices1,
+                        choices2,
+                    ) = {
+                        let mut rng1 = StdRng::seed_from_u64(42);
+                        let mut rng2 = StdRng::seed_from_u64(42 * 42);
+                        let mut choices1 = random_choices(count, &mut rng1);
+                        let mut choices2 = random_choices(count, &mut rng2);
+                        let mut sender1 =
+                            OtExtensionSender::new_with_rng(c11.sub_connection(), rng1.clone());
+                        let mut receiver1 =
+                            OtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2.clone());
 
-                let mut sender2 = OtExtensionSender::new_with_rng(c1.sub_connection(), rng1);
-                let mut receiver2 = OtExtensionReceiver::new_with_rng(c2.sub_connection(), rng2);
+                        let mut sender2 =
+                            OtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
+                        let mut receiver2 =
+                            OtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
 
-                let handle = rt.handle();
-                thread::scope(|s| {
-                    s.spawn(|| {
-                        handle
-                            .block_on(async {
-                                tokio::try_join!(
-                                    sender1.do_base_ots(),
-                                    receiver1.do_base_ots(),
-                                    sender2.do_base_ots(),
-                                    receiver2.do_base_ots()
-                                )
-                            })
-                            .unwrap();
-                    });
-                });
-                (sender1, receiver1, sender2, receiver2, choices)
-            },
-            |(mut sender1, mut receiver1, mut sender2, mut receiver2, choices)| {
-                // TOOD why does multiple rts not work but one rt does?
-                thread::scope(|s| {
-                    s.spawn(|| rt1.block_on(sender1.send(count)));
-                    s.spawn(|| rt2.block_on(receiver1.receive(&choices)));
-                    s.spawn(|| rt3.block_on(sender2.send(count)));
-                    s.spawn(|| rt4.block_on(receiver2.receive(&choices)));
-                });
-                // rt.block_on(async {
-                //     tokio::try_join!(
-                //         sender1.send(count),
-                //         receiver1.receive(&choices),
-                //         sender2.send(count),
-                //         receiver2.receive(&choices),
-                //     )
-                //     .unwrap();
-                // })
-            },
-            BatchSize::SmallInput,
-        )
+                        tokio::try_join!(
+                            sender1.do_base_ots(),
+                            receiver1.do_base_ots(),
+                            sender2.do_base_ots(),
+                            receiver2.do_base_ots()
+                        )
+                        .unwrap();
+                        (sender1, receiver1, sender2, receiver2, choices1, choices2)
+                    };
+                    let now = Instant::now();
+                    let jh1 = tokio::spawn(async move { sender1.send(count).await });
+                    let jh2 = tokio::spawn(async move { receiver1.receive(&choices1).await });
+                    let jh3 = tokio::spawn(async move { sender2.send(count).await });
+                    let jh4 = tokio::spawn(async move { receiver2.receive(&choices2).await });
+                    let (ot1, ot2, ot3, ot4) = tokio::try_join!(jh1, jh2, jh3, jh4).unwrap();
+                    duration += now.elapsed();
+                    ot1.unwrap();
+                    ot2.unwrap();
+                    ot3.unwrap();
+                    ot4.unwrap();
+                }
+                duration
+            }
+        })
     });
 }
 

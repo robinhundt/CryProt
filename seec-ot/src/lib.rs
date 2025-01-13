@@ -30,6 +30,6 @@ pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<
     uniform
         .sample_iter(rng)
         .take(count)
-        .map(|v| Choice::from(v))
+        .map(Choice::from)
         .collect()
 }

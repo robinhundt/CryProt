@@ -1,10 +1,10 @@
 use std::{
-    alloc::{alloc, alloc_zeroed, Layout},
+    alloc::{alloc_zeroed, Layout},
     mem,
     ops::BitXorAssign,
 };
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Zeroable;
 
 pub fn xor_inplace<T: Copy + BitXorAssign>(a: &mut [T], b: &[T]) {
     a.iter_mut().zip(b).for_each(|(a, b)| {

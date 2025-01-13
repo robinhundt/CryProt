@@ -1,4 +1,4 @@
-use std::{alloc::{alloc_zeroed, Layout}, ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not}};
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 
 use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};

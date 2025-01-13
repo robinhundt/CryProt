@@ -8,8 +8,7 @@ use aes::{
     cipher::{BlockCipherEncrypt, Key, KeyInit},
     Aes128,
 };
-use bytemuck::{AnyBitPattern, Pod};
-use hybrid_array::{sizes::U16, Array};
+use bytemuck::Pod;
 
 use crate::{
     utils::{allocate_zeroed_vec, xor_inplace},

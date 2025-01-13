@@ -1,16 +1,14 @@
 use std::{
-    mem::{self, MaybeUninit},
+    mem::{self},
     thread,
-    time::Duration,
 };
 
-use futures::{SinkExt, StreamExt};
-use rand::{rngs::StdRng, thread_rng, RngCore, SeedableRng};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use seec_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     transpose::transpose_bitmatrix,
-    utils::{allocate_zeroed_vec, xor_inplace, xor_inplace_elem},
+    utils::{allocate_zeroed_vec, xor_inplace},
     Block,
 };
 use seec_net::Connection;
@@ -18,7 +16,6 @@ use subtle::Choice;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{mpsc, oneshot},
-    time::sleep,
 };
 use tracing::Level;
 
@@ -26,7 +23,7 @@ use crate::{base::SimplestOt, random_choices, RotReceiver, RotSender};
 
 pub const BASE_OT_COUNT: usize = 128;
 
-const OT_BATCH_SIZE: usize = 2_usize.pow(16);
+pub const DEFAULT_OT_BATCH_SIZE: usize = 2_usize.pow(16);
 
 pub struct OtExtensionSender {
     rng: StdRng,
@@ -35,13 +32,14 @@ pub struct OtExtensionSender {
     base_rngs: Vec<AesRng>,
     base_choices: Vec<Choice>,
     delta: Option<Block>,
+    batch_size: usize,
 }
 
 pub struct OtExtensionReceiver {
-    rng: StdRng,
     base_ot: SimplestOt,
     conn: Connection,
     base_rngs: Vec<[AesRng; 2]>,
+    batch_size: usize,
 }
 
 impl OtExtensionSender {
@@ -59,7 +57,17 @@ impl OtExtensionSender {
             base_rngs: vec![],
             base_choices: vec![],
             delta: None,
+            batch_size: DEFAULT_OT_BATCH_SIZE,
         }
+    }
+
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
     }
 
     pub fn has_base_ots(&self) -> bool {
@@ -69,10 +77,7 @@ impl OtExtensionSender {
     pub async fn do_base_ots(&mut self) -> Result<(), ()> {
         let base_choices = random_choices(BASE_OT_COUNT, &mut self.rng);
         let base_ots = self.base_ot.receive(&base_choices).await.unwrap();
-        self.base_rngs = base_ots
-            .into_iter()
-            .map(|seed| AesRng::from_seed(seed))
-            .collect();
+        self.base_rngs = base_ots.into_iter().map(AesRng::from_seed).collect();
         self.delta = Some(Block::from_choices(&base_choices));
         self.base_choices = base_choices;
         Ok(())
@@ -85,25 +90,49 @@ impl RotSender for OtExtensionSender {
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn send(&mut self, count: usize) -> Result<Vec<[seec_core::Block; 2]>, Self::Error> {
         assert_eq!(0, count % 8, "count must be multiple of 8");
-        assert_eq!(0, count % OT_BATCH_SIZE);
+        let batch_size = self.batch_size();
+        assert_eq!(
+            0,
+            count % batch_size,
+            "count must be a multiple of self.batch_size(). Default: {}",
+            DEFAULT_OT_BATCH_SIZE
+        );
         if !self.has_base_ots() {
             self.do_base_ots().await.unwrap();
         }
 
         let delta = self.delta.expect("base OTs are done");
-        let batches = count / OT_BATCH_SIZE;
+        let batches = count / batch_size;
+        let cols_byte_batch = batch_size / 8;
         let mut sub_conn = self.conn.sub_connection();
 
         let (ch_s, ch_r) = std::sync::mpsc::channel::<Vec<u8>>();
         let (ret_s, ret_r) = oneshot::channel();
+        let mut base_rngs = mem::take(&mut self.base_rngs);
+        let base_choices = mem::take(&mut self.base_choices);
 
         let jh = thread::spawn(move || {
             let mut ots = allocate_zeroed_vec(count);
-            let mut v_mat_blocks =
-                allocate_zeroed_vec::<Block>(OT_BATCH_SIZE);
+            let mut v_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
+            let mut v_mat_blocks = allocate_zeroed_vec::<Block>(batch_size);
+            let zero_row = vec![0_u8; cols_byte_batch];
 
-            for ot_batch in ots.chunks_exact_mut(OT_BATCH_SIZE) {
-                let v_mat = ch_r.recv().unwrap();
+            for ot_batch in ots.chunks_exact_mut(batch_size) {
+                let row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
+
+                for ((v_row, base_rng), base_choice) in
+                    row_iter.zip(&mut base_rngs).zip(&base_choices)
+                {
+                    base_rng.fill_bytes(v_row);
+                    let recv_row = ch_r.recv().unwrap();
+                    // The following is a best-effort constant time implementation
+                    let xor_row = if base_choice.unwrap_u8() == 0 {
+                        &zero_row
+                    } else {
+                        &recv_row
+                    };
+                    xor_inplace(v_row, xor_row);
+                }
                 transpose_bitmatrix(
                     &v_mat,
                     bytemuck::cast_slice_mut(&mut v_mat_blocks),
@@ -141,37 +170,22 @@ impl RotSender for OtExtensionSender {
                     *out_ot = [x_0, x_1]
                 }
             }
-            ret_s.send(ots).unwrap();
+            ret_s.send((ots, base_rngs, base_choices)).unwrap();
         });
 
         let (_, mut recv) = sub_conn.byte_stream().await.unwrap();
 
-        for batch in 0..batches {
-            // div by 8 because size of byte
-            let cols_byte_batch = OT_BATCH_SIZE / 8;
-            let mut v_mat = vec![0_u8; BASE_OT_COUNT * cols_byte_batch];
-
-            let zero_row = vec![0_u8; cols_byte_batch];
-            let mut row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
-
-            let mut recv_row = vec![0; cols_byte_batch];
-
-            for i in 0..BASE_OT_COUNT {
-                let v_row = row_iter.next().unwrap();
-                self.base_rngs[i].fill_bytes(v_row);
-                let r = self.base_choices[i];
+        for _ in 0..batches {
+            for _ in 0..BASE_OT_COUNT {
+                let mut recv_row = vec![0; cols_byte_batch];
                 recv.read_exact(&mut recv_row).await.unwrap();
-                // The following is a best-effort constant time implementation
-                let xor_row = if r.unwrap_u8() == 0 {
-                    &zero_row
-                } else {
-                    &recv_row
-                };
-                xor_inplace(v_row, &xor_row);
+                ch_s.send(recv_row).unwrap();
             }
-            ch_s.send(v_mat).unwrap();
         }
-        let ots = ret_r.await.unwrap();
+
+        let (ots, base_rngs, base_choices) = ret_r.await.unwrap();
+        self.base_rngs = base_rngs;
+        self.base_choices = base_choices;
         // thread is already finished, get errors
         jh.join().unwrap();
         Ok(ots)
@@ -183,15 +197,23 @@ impl OtExtensionReceiver {
         Self::new_with_rng(conn, StdRng::from_entropy())
     }
 
-    pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
-        let base_ot =
-            SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng).unwrap());
+    pub fn new_with_rng(mut conn: Connection, rng: StdRng) -> Self {
+        let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), rng);
         Self {
-            rng,
             base_ot,
             conn,
             base_rngs: vec![],
+            batch_size: DEFAULT_OT_BATCH_SIZE,
         }
+    }
+
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
     }
 
     pub fn has_base_ots(&self) -> bool {
@@ -215,15 +237,21 @@ impl RotReceiver for OtExtensionReceiver {
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn receive(&mut self, choices: &[Choice]) -> Result<Vec<Block>, Self::Error> {
         assert_eq!(0, choices.len() % 8, "choices.len() must be multiple of 8");
+        let batch_size = self.batch_size();
+        let count = choices.len();
+        assert_eq!(
+            0,
+            count % batch_size,
+            "choices.len() must be a multiple of self.batch_size(). Default: {}",
+            DEFAULT_OT_BATCH_SIZE
+        );
 
         if !self.has_base_ots() {
             self.do_base_ots().await.unwrap();
         }
-        let count = choices.len();
-        let batches = count / OT_BATCH_SIZE;
+        let batches = count / batch_size;
         let cols_byte_all = count / 8;
-        let cols_byte_batch = OT_BATCH_SIZE / 8;
-        // let mut t_mat = vec![0_u8; BASE_OT_COUNT * cols_byte];
+        let cols_byte_batch = batch_size / 8;
 
         let choice_vec = choices_to_u8_vec(choices);
         let mut sub_conn = self.conn.sub_connection();
@@ -233,30 +261,29 @@ impl RotReceiver for OtExtensionReceiver {
 
         let mut base_rngs = mem::take(&mut self.base_rngs);
         thread::spawn(move || {
-            let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_all];
+            let mut output = allocate_zeroed_vec(count);
 
-            for (batch, choice_batch) in (0..batches).zip(choice_vec.chunks_exact(cols_byte_batch))
+            for (output_chunk, choice_batch) in output
+                .chunks_exact_mut(batch_size)
+                .zip(choice_vec.chunks_exact(cols_byte_batch))
             {
-                for (row, [rng1, rng2]) in t_mat
-                    .chunks_exact_mut(cols_byte_batch)
-                    .skip(batch)
-                    .step_by(batches)
-                    .zip(&mut base_rngs)
+                let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
+                for (row, [rng1, rng2]) in
+                    t_mat.chunks_exact_mut(cols_byte_batch).zip(&mut base_rngs)
                 {
-                    let mut send_row = vec![0_u8; cols_byte_batch];
                     rng1.fill_bytes(row);
+                    let mut send_row = vec![0_u8; cols_byte_batch];
                     rng2.fill_bytes(&mut send_row);
                     for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
                         *v2 ^= *v1 ^ *choices;
                     }
                     ch_s.send(send_row).unwrap();
                 }
+                let output_bytes = bytemuck::cast_slice_mut(output_chunk);
+                transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
+                FIXED_KEY_HASH.cr_hash_slice_mut(output_chunk);
             }
 
-            let mut output = allocate_zeroed_vec(t_mat.len() / mem::size_of::<Block>());
-            let output_bytes = bytemuck::cast_slice_mut(&mut output);
-            transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
-            FIXED_KEY_HASH.cr_hash_slice_mut(&mut output);
             ret_s.send((output, base_rngs)).unwrap();
         });
 
@@ -284,21 +311,20 @@ fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
 
     use rand::{rngs::StdRng, SeedableRng};
     use seec_core::test_utils::init_tracing;
     use seec_net::testing::local_conn;
 
     use crate::{
-        extension::{OtExtensionReceiver, OtExtensionSender},
+        extension::{OtExtensionReceiver, OtExtensionSender, DEFAULT_OT_BATCH_SIZE},
         random_choices, RotReceiver, RotSender,
     };
 
     #[tokio::test]
     async fn test_extension() {
         let _g = init_tracing();
-        const COUNT: usize = 2_usize.pow(24);
+        const COUNT: usize = 2 * DEFAULT_OT_BATCH_SIZE;
         let (c1, c2) = local_conn().await.unwrap();
         let rng1 = StdRng::seed_from_u64(42);
         let mut rng2 = StdRng::seed_from_u64(24);

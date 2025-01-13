@@ -14,6 +14,7 @@ static KEY_PEM: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/
 #[tracing::instrument]
 pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
     // TODO sensible send buffer sizes and limits
+    #[allow(non_upper_case_globals)]
     const MiB: usize = 1024 * 1024;
     let max_streams = 1 << 59;
     let limits = Limits::new()

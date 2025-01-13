@@ -1,6 +1,5 @@
 use std::io;
 
-use bitvec::slice::BitSlice;
 use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, RistrettoPoint, Scalar};
 use futures::{SinkExt, StreamExt};
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -156,8 +155,8 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use bitvec::bitvec;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    
+    use rand::{rngs::StdRng, SeedableRng};
     use seec_core::test_utils::init_tracing;
     use seec_net::testing::local_conn;
 

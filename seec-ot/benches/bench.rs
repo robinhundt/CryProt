@@ -1,11 +1,7 @@
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-use bitvec::bitvec;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, SeedableRng};
 use seec_core::test_utils::init_bench_tracing;
 use seec_net::testing::local_conn;
 use seec_ot::{
@@ -13,10 +9,7 @@ use seec_ot::{
     extension::{OtExtensionReceiver, OtExtensionSender},
     random_choices, RotReceiver, RotSender,
 };
-use tokio::{
-    runtime::{self, Handle, Runtime},
-    time,
-};
+use tokio::runtime::{self, Runtime};
 
 fn create_mt_runtime(threads: usize) -> Runtime {
     runtime::Builder::new_multi_thread()
@@ -38,7 +31,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             || {
                 let mut rng1 = StdRng::seed_from_u64(42);
                 let rng2 = StdRng::seed_from_u64(42 * 42);
-                let mut choices = random_choices(count, &mut rng1);
+                let choices = random_choices(count, &mut rng1);
                 let sender = SimplestOt::new_with_rng(c1.sub_connection(), rng1);
                 let receiver = SimplestOt::new_with_rng(c2.sub_connection(), rng2);
                 (sender, receiver, choices)
@@ -108,8 +101,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                     ) = {
                         let mut rng1 = StdRng::seed_from_u64(42);
                         let mut rng2 = StdRng::seed_from_u64(42 * 42);
-                        let mut choices1 = random_choices(count, &mut rng1);
-                        let mut choices2 = random_choices(count, &mut rng2);
+                        let choices1 = random_choices(count, &mut rng1);
+                        let choices2 = random_choices(count, &mut rng2);
                         let mut sender1 =
                             OtExtensionSender::new_with_rng(c11.sub_connection(), rng1.clone());
                         let mut receiver1 =

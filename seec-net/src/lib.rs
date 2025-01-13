@@ -620,7 +620,7 @@ impl AsyncRead for ReceiveStreamBytes {
 
 #[cfg(test)]
 mod tests {
-    use std::{time::Duration, u8};
+    use std::u8;
 
     use anyhow::{Context, Result};
     use futures::{SinkExt, StreamExt};
@@ -628,7 +628,6 @@ mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinSet,
-        time::{sleep, Sleep},
     };
     use tracing::debug;
 

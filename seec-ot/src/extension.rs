@@ -113,11 +113,11 @@ impl RotSender for OtExtensionSender {
 
         let jh = thread::spawn(move || {
             let mut ots = allocate_zeroed_vec(count);
-            let mut v_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
             let mut v_mat_blocks = allocate_zeroed_vec::<Block>(batch_size);
             let zero_row = vec![0_u8; cols_byte_batch];
 
             for ot_batch in ots.chunks_exact_mut(batch_size) {
+                let v_mat = bytemuck::cast_slice_mut(&mut ot_batch[..batch_size / 2]);
                 let row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
 
                 for ((v_row, base_rng), base_choice) in
@@ -139,36 +139,45 @@ impl RotSender for OtExtensionSender {
                     BASE_OT_COUNT,
                 );
 
-                // chunk into 9 len chunks so we can make use of AES-NI ILP
-                const CHUNK_SIZE: usize = 9;
-                let mut chunk_iter = v_mat_blocks.chunks_exact(CHUNK_SIZE);
-                let mut ots_chunk_iter = ot_batch.chunks_exact_mut(CHUNK_SIZE);
-                for (chunk, out_ots_chunk) in chunk_iter.by_ref().zip(ots_chunk_iter.by_ref()) {
-                    macro_rules! load_arr {
-                        ($($idx:expr),+) => {
-                            [
-                                $(
-                                    chunk[$idx],
-                                    chunk[$idx] ^ delta,
-                                )*
-                            ]
-                        };
-                    }
-                    let arr = load_arr!(0, 1, 2, 3, 4, 5, 6, 7, 8);
-
-                    FIXED_KEY_HASH
-                        .cr_hash_blocks_b2b(&arr, bytemuck::cast_slice_mut(out_ots_chunk));
+                for (v, ots) in v_mat_blocks.iter().zip(ot_batch.iter_mut()) {
+                    *ots = [*v, *v ^ delta]
                 }
 
-                for (block, out_ot) in chunk_iter
-                    .remainder()
-                    .iter()
-                    .zip(ots_chunk_iter.into_remainder())
-                {
-                    let x_0 = FIXED_KEY_HASH.cr_hash_block(*block);
-                    let x_1 = FIXED_KEY_HASH.cr_hash_block(*block ^ delta);
-                    *out_ot = [x_0, x_1]
-                }
+                FIXED_KEY_HASH.cr_hash_slice_mut(bytemuck::cast_slice_mut(ot_batch));
+
+                // // chunk into 9 len chunks so we can make use of AES-NI ILP
+                // const CHUNK_SIZE: usize = 9;
+                // let mut chunk_iter = v_mat_blocks.chunks_exact(CHUNK_SIZE);
+                // let mut ots_chunk_iter =
+                // ot_batch.chunks_exact_mut(CHUNK_SIZE);
+
+                // for (chunk, out_ots_chunk) in
+                // chunk_iter.by_ref().zip(ots_chunk_iter.by_ref()) {
+                //     macro_rules! load_arr {
+                //         ($($idx:expr),+) => {
+                //             [
+                //                 $(
+                //                     chunk[$idx],
+                //                     chunk[$idx] ^ delta,
+                //                 )*
+                //             ]
+                //         };
+                //     }
+                //     let arr = load_arr!(0, 1, 2, 3, 4, 5, 6, 7, 8);
+
+                //     FIXED_KEY_HASH
+                //         .cr_hash_blocks_b2b(&arr,
+                // bytemuck::cast_slice_mut(out_ots_chunk)); }
+
+                // for (block, out_ot) in chunk_iter
+                //     .remainder()
+                //     .iter()
+                //     .zip(ots_chunk_iter.into_remainder())
+                // {
+                //     let x_0 = FIXED_KEY_HASH.cr_hash_block(*block);
+                //     let x_1 = FIXED_KEY_HASH.cr_hash_block(*block ^ delta);
+                //     *out_ot = [x_0, x_1]
+                // }
             }
             ret_s.send((ots, base_rngs, base_choices)).unwrap();
         });
@@ -262,12 +271,12 @@ impl RotReceiver for OtExtensionReceiver {
         let mut base_rngs = mem::take(&mut self.base_rngs);
         thread::spawn(move || {
             let mut output = allocate_zeroed_vec(count);
+            let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
 
             for (output_chunk, choice_batch) in output
                 .chunks_exact_mut(batch_size)
                 .zip(choice_vec.chunks_exact(cols_byte_batch))
             {
-                let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
                 for (row, [rng1, rng2]) in
                     t_mat.chunks_exact_mut(cols_byte_batch).zip(&mut base_rngs)
                 {

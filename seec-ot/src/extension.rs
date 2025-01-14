@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io, iter,
     mem::{self},
     panic::resume_unwind,
     thread,
@@ -106,22 +106,32 @@ impl OtExtensionSender {
 impl RotSender for OtExtensionSender {
     type Error = Error;
 
+    /// Sender part of OT extension.
+    /// 
+    /// # Panics
+    /// - If `count` is not divisable by 128.
+    /// - If `count % self.batch_size()` is not divisable by 128. 
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn send(&mut self, count: usize) -> Result<Vec<[seec_core::Block; 2]>, Self::Error> {
-        assert_eq!(0, count % 8, "count must be multiple of 8");
+        assert_eq!(0, count % 128, "count must be multiple of 128");
         let batch_size = self.batch_size();
+        let batches = count / batch_size;
+        let batch_size_remainder = count % batch_size;
         assert_eq!(
             0,
-            count % batch_size,
-            "count must be a multiple of self.batch_size(). Default: {}",
-            DEFAULT_OT_BATCH_SIZE
+            batch_size_remainder % 128,
+            "count % batch_size must be multiple of 128"
         );
+
+        let batch_sizes = iter::repeat(batch_size)
+            .take(batches)
+            .chain(iter::once(batch_size_remainder));
+
         if !self.has_base_ots() {
             self.do_base_ots().await?;
         }
 
         let delta = self.delta.expect("base OTs are done");
-        let batches = count / batch_size;
         let cols_byte_batch = batch_size / 8;
         let mut sub_conn = self.conn.sub_connection();
 
@@ -132,6 +142,7 @@ impl RotSender for OtExtensionSender {
         // take these to move them into compute thread, will be returned via ret channel
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let base_choices = mem::take(&mut self.base_choices);
+        let batch_sizes_th = batch_sizes.clone();
 
         // spawn compute thread for CPU intensive work. This way we increase throughput
         // and don't risk of blocking tokio worker threads
@@ -144,7 +155,8 @@ impl RotSender for OtExtensionSender {
             // self.batch_size(). Crucially, this allows us to do the transpose
             // and hash step while not having received the complete data from the
             // OtExtensionReceiver.
-            for ot_batch in ots.chunks_exact_mut(batch_size) {
+            for (ot_batch, batch_size) in ots.chunks_mut(batch_size).zip(batch_sizes_th) {
+                let cols_byte_batch = batch_size / 8;
                 // we temporarily use the output OT buffer to hold the current chunk of the V
                 // matrix which we XOR with our received row or 0 and then
                 // transpose into `transposed`
@@ -167,11 +179,10 @@ impl RotSender for OtExtensionSender {
                     };
                     xor_inplace(v_row, xor_row);
                 }
-                transpose_bitmatrix(
-                    v_mat,
-                    bytemuck::cast_slice_mut(&mut transposed),
-                    BASE_OT_COUNT,
-                );
+                {
+                    let transposed = bytemuck::cast_slice_mut(&mut transposed);
+                    transpose_bitmatrix(v_mat, &mut transposed[..v_mat.len()], BASE_OT_COUNT);
+                }
 
                 for (v, ots) in transposed.iter().zip(ot_batch.iter_mut()) {
                     *ots = [*v, *v ^ delta]
@@ -187,7 +198,8 @@ impl RotSender for OtExtensionSender {
 
         let (_, mut recv) = sub_conn.byte_stream().await?;
 
-        for _ in 0..batches {
+        for batch_size in batch_sizes {
+            let cols_byte_batch = batch_size / 8;
             for _ in 0..BASE_OT_COUNT {
                 let mut recv_row = vec![0; cols_byte_batch];
                 recv.read_exact(&mut recv_row)
@@ -259,16 +271,25 @@ impl OtExtensionReceiver {
 impl RotReceiver for OtExtensionReceiver {
     type Error = Error;
 
+    /// Receiver part of OT extension.
+    /// 
+    /// # Panics
+    /// - If `choices.len()` is not divisable by 128.
+    /// - If `choices.len() % self.batch_size()` is not divisable by 128.
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn receive(&mut self, choices: &[Choice]) -> Result<Vec<Block>, Self::Error> {
-        assert_eq!(0, choices.len() % 8, "choices.len() must be multiple of 8");
-        let batch_size = self.batch_size();
-        let count = choices.len();
         assert_eq!(
             0,
-            count % batch_size,
-            "choices.len() must be a multiple of self.batch_size(). Default: {}",
-            DEFAULT_OT_BATCH_SIZE
+            choices.len() % 128,
+            "choices.len() must be multiple of 128"
+        );
+        let batch_size = self.batch_size();
+        let count = choices.len();
+        let batch_size_remainder = count % batch_size;
+        assert_eq!(
+            0,
+            batch_size_remainder % 128,
+            "count % batch_size must be multiple of 128"
         );
 
         if !self.has_base_ots() {
@@ -289,9 +310,11 @@ impl RotReceiver for OtExtensionReceiver {
             let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
 
             for (output_chunk, choice_batch) in output
-                .chunks_exact_mut(batch_size)
-                .zip(choice_vec.chunks_exact(cols_byte_batch))
+                .chunks_mut(batch_size)
+                .zip(choice_vec.chunks(cols_byte_batch))
             {
+                // might change for last chunk
+                let cols_byte_batch = choice_batch.len();
                 for (row, [rng1, rng2]) in
                     t_mat.chunks_exact_mut(cols_byte_batch).zip(&mut base_rngs)
                 {
@@ -307,7 +330,11 @@ impl RotReceiver for OtExtensionReceiver {
                     }
                 }
                 let output_bytes = bytemuck::cast_slice_mut(output_chunk);
-                transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
+                transpose_bitmatrix(
+                    &t_mat[..BASE_OT_COUNT * cols_byte_batch],
+                    output_bytes,
+                    BASE_OT_COUNT,
+                );
                 FIXED_KEY_HASH.cr_hash_slice_mut(output_chunk);
             }
 
@@ -360,6 +387,40 @@ mod tests {
     async fn test_extension() {
         let _g = init_tracing();
         const COUNT: usize = 2 * DEFAULT_OT_BATCH_SIZE;
+        let (c1, c2) = local_conn().await.unwrap();
+        let rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(24);
+        let choices = random_choices(COUNT, &mut rng2);
+        let mut sender = OtExtensionSender::new_with_rng(c1, rng1);
+        let mut receiver = OtExtensionReceiver::new_with_rng(c2, rng2);
+        let (send_ots, recv_ots) =
+            tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
+        for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
+            assert_eq!(r, s[c.unwrap_u8() as usize]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extension_half_batch() {
+        let _g = init_tracing();
+        const COUNT: usize = 2 * DEFAULT_OT_BATCH_SIZE + DEFAULT_OT_BATCH_SIZE / 2;
+        let (c1, c2) = local_conn().await.unwrap();
+        let rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(24);
+        let choices = random_choices(COUNT, &mut rng2);
+        let mut sender = OtExtensionSender::new_with_rng(c1, rng1);
+        let mut receiver = OtExtensionReceiver::new_with_rng(c2, rng2);
+        let (send_ots, recv_ots) =
+            tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
+        for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
+            assert_eq!(r, s[c.unwrap_u8() as usize]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extension_partial_batch() {
+        let _g = init_tracing();
+        const COUNT: usize = DEFAULT_OT_BATCH_SIZE / 2 + 128;
         let (c1, c2) = local_conn().await.unwrap();
         let rng1 = StdRng::seed_from_u64(42);
         let mut rng2 = StdRng::seed_from_u64(24);

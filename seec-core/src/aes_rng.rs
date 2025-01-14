@@ -32,8 +32,8 @@ impl RngCore for AesRng {
     }
     #[inline]
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        let rest_len = dest.len().next_multiple_of(mem::size_of::<aes::Block>()) - dest.len();
-        let block_len = dest.len() - rest_len;
+        let block_size = mem::size_of::<aes::Block>();
+        let block_len = dest.len() / block_size * block_size;
         let (block_bytes, rest_bytes) = dest.split_at_mut(block_len);
         // fast path so we don't unnecessarily copy u32 from BlockRngCore::generate into
         // dest

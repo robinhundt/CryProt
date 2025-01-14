@@ -1,5 +1,7 @@
 use std::{
+    io,
     mem::{self},
+    panic::resume_unwind,
     thread,
 };
 
@@ -11,7 +13,7 @@ use seec_core::{
     utils::{allocate_zeroed_vec, xor_inplace},
     Block,
 };
-use seec_net::Connection;
+use seec_net::{Connection, ConnectionError};
 use subtle::Choice;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -19,7 +21,10 @@ use tokio::{
 };
 use tracing::Level;
 
-use crate::{base::SimplestOt, random_choices, RotReceiver, RotSender};
+use crate::{
+    base::{self, SimplestOt},
+    random_choices, RotReceiver, RotSender,
+};
 
 pub const BASE_OT_COUNT: usize = 128;
 
@@ -40,6 +45,20 @@ pub struct OtExtensionReceiver {
     conn: Connection,
     base_rngs: Vec<[AesRng; 2]>,
     batch_size: usize,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("unable to compute base OTs")]
+    BaseOT(#[from] base::Error),
+    #[error("connection error to peer")]
+    Connection(#[from] ConnectionError),
+    #[error("receive error")]
+    Receive(#[source] io::Error),
+    #[error("compute worker thread is unreachable")]
+    WorkerThreadUnreachable,
+    #[error("send error")]
+    Send(#[source] io::Error),
 }
 
 impl OtExtensionSender {
@@ -74,9 +93,9 @@ impl OtExtensionSender {
         self.base_rngs.len() == BASE_OT_COUNT
     }
 
-    pub async fn do_base_ots(&mut self) -> Result<(), ()> {
+    pub async fn do_base_ots(&mut self) -> Result<(), Error> {
         let base_choices = random_choices(BASE_OT_COUNT, &mut self.rng);
-        let base_ots = self.base_ot.receive(&base_choices).await.unwrap();
+        let base_ots = self.base_ot.receive(&base_choices).await?;
         self.base_rngs = base_ots.into_iter().map(AesRng::from_seed).collect();
         self.delta = Some(Block::from_choices(&base_choices));
         self.base_choices = base_choices;
@@ -85,7 +104,7 @@ impl OtExtensionSender {
 }
 
 impl RotSender for OtExtensionSender {
-    type Error = ();
+    type Error = Error;
 
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn send(&mut self, count: usize) -> Result<Vec<[seec_core::Block; 2]>, Self::Error> {
@@ -98,7 +117,7 @@ impl RotSender for OtExtensionSender {
             DEFAULT_OT_BATCH_SIZE
         );
         if !self.has_base_ots() {
-            self.do_base_ots().await.unwrap();
+            self.do_base_ots().await?;
         }
 
         let delta = self.delta.expect("base OTs are done");
@@ -106,17 +125,29 @@ impl RotSender for OtExtensionSender {
         let cols_byte_batch = batch_size / 8;
         let mut sub_conn = self.conn.sub_connection();
 
+        // channel for communication between async task and compute thread
         let (ch_s, ch_r) = std::sync::mpsc::channel::<Vec<u8>>();
+        // return channel of compute thread
         let (ret_s, ret_r) = oneshot::channel();
+        // take these to move them into compute thread, will be returned via ret channel
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let base_choices = mem::take(&mut self.base_choices);
 
+        // spawn compute thread for CPU intensive work. This way we increase throughput
+        // and don't risk of blocking tokio worker threads
         let jh = thread::spawn(move || {
             let mut ots = allocate_zeroed_vec(count);
-            let mut v_mat_blocks = allocate_zeroed_vec::<Block>(batch_size);
+            let mut transposed = allocate_zeroed_vec::<Block>(batch_size);
             let zero_row = vec![0_u8; cols_byte_batch];
 
+            // to increase throughput, we divide the `count` many OTs into batches of size
+            // self.batch_size(). Crucially, this allows us to do the transpose
+            // and hash step while not having received the complete data from the
+            // OtExtensionReceiver.
             for ot_batch in ots.chunks_exact_mut(batch_size) {
+                // we temporarily use the output OT buffer to hold the current chunk of the V
+                // matrix which we XOR with our received row or 0 and then
+                // transpose into `transposed`
                 let v_mat = bytemuck::cast_slice_mut(&mut ot_batch[..batch_size / 2]);
                 let row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
 
@@ -124,7 +155,10 @@ impl RotSender for OtExtensionSender {
                     row_iter.zip(&mut base_rngs).zip(&base_choices)
                 {
                     base_rng.fill_bytes(v_row);
-                    let recv_row = ch_r.recv().unwrap();
+                    let Ok(recv_row) = ch_r.recv() else {
+                        // ch_s was dropped before completion, stop thread
+                        return;
+                    };
                     // The following is a best-effort constant time implementation
                     let xor_row = if base_choice.unwrap_u8() == 0 {
                         &zero_row
@@ -134,69 +168,51 @@ impl RotSender for OtExtensionSender {
                     xor_inplace(v_row, xor_row);
                 }
                 transpose_bitmatrix(
-                    &v_mat,
-                    bytemuck::cast_slice_mut(&mut v_mat_blocks),
+                    v_mat,
+                    bytemuck::cast_slice_mut(&mut transposed),
                     BASE_OT_COUNT,
                 );
 
-                for (v, ots) in v_mat_blocks.iter().zip(ot_batch.iter_mut()) {
+                for (v, ots) in transposed.iter().zip(ot_batch.iter_mut()) {
                     *ots = [*v, *v ^ delta]
                 }
 
                 FIXED_KEY_HASH.cr_hash_slice_mut(bytemuck::cast_slice_mut(ot_batch));
-
-                // // chunk into 9 len chunks so we can make use of AES-NI ILP
-                // const CHUNK_SIZE: usize = 9;
-                // let mut chunk_iter = v_mat_blocks.chunks_exact(CHUNK_SIZE);
-                // let mut ots_chunk_iter =
-                // ot_batch.chunks_exact_mut(CHUNK_SIZE);
-
-                // for (chunk, out_ots_chunk) in
-                // chunk_iter.by_ref().zip(ots_chunk_iter.by_ref()) {
-                //     macro_rules! load_arr {
-                //         ($($idx:expr),+) => {
-                //             [
-                //                 $(
-                //                     chunk[$idx],
-                //                     chunk[$idx] ^ delta,
-                //                 )*
-                //             ]
-                //         };
-                //     }
-                //     let arr = load_arr!(0, 1, 2, 3, 4, 5, 6, 7, 8);
-
-                //     FIXED_KEY_HASH
-                //         .cr_hash_blocks_b2b(&arr,
-                // bytemuck::cast_slice_mut(out_ots_chunk)); }
-
-                // for (block, out_ot) in chunk_iter
-                //     .remainder()
-                //     .iter()
-                //     .zip(ots_chunk_iter.into_remainder())
-                // {
-                //     let x_0 = FIXED_KEY_HASH.cr_hash_block(*block);
-                //     let x_1 = FIXED_KEY_HASH.cr_hash_block(*block ^ delta);
-                //     *out_ot = [x_0, x_1]
-                // }
             }
-            ret_s.send((ots, base_rngs, base_choices)).unwrap();
+
+            // we ignore the error case, as this means that the return receiver was dropped,
+            // likely because the async task itself was dropped
+            let _ret = ret_s.send((ots, base_rngs, base_choices));
         });
 
-        let (_, mut recv) = sub_conn.byte_stream().await.unwrap();
+        let (_, mut recv) = sub_conn.byte_stream().await?;
 
         for _ in 0..batches {
             for _ in 0..BASE_OT_COUNT {
                 let mut recv_row = vec![0; cols_byte_batch];
-                recv.read_exact(&mut recv_row).await.unwrap();
-                ch_s.send(recv_row).unwrap();
+                recv.read_exact(&mut recv_row)
+                    .await
+                    .map_err(Error::Receive)?;
+                if ch_s.send(recv_row).is_err() {
+                    // If we can't send on the channel, the channel must've been dropped due to a
+                    // panic in the worker thread. So we try to join the thread and resume_unwind to
+                    // propagate the panic
+                    match jh.join() {
+                        Err(err) => resume_unwind(err),
+                        // This case should not occur as long as the number of send and reads on the
+                        // channel is equal
+                        Ok(_) => {
+                            unreachable!("ch_s failed but thread did not panic. This is a bug.")
+                        }
+                    }
+                };
             }
         }
 
-        let (ots, base_rngs, base_choices) = ret_r.await.unwrap();
+        let (ots, base_rngs, base_choices) =
+            ret_r.await.map_err(|_| Error::WorkerThreadUnreachable)?;
         self.base_rngs = base_rngs;
         self.base_choices = base_choices;
-        // thread is already finished, get errors
-        jh.join().unwrap();
         Ok(ots)
     }
 }
@@ -230,8 +246,8 @@ impl OtExtensionReceiver {
     }
 
     #[tracing::instrument(level = Level::DEBUG, skip(self))]
-    pub async fn do_base_ots(&mut self) -> Result<(), ()> {
-        let base_ots = self.base_ot.send(BASE_OT_COUNT).await.unwrap();
+    pub async fn do_base_ots(&mut self) -> Result<(), Error> {
+        let base_ots = self.base_ot.send(BASE_OT_COUNT).await?;
         self.base_rngs = base_ots
             .into_iter()
             .map(|[s1, s2]| [AesRng::from_seed(s1), AesRng::from_seed(s2)])
@@ -241,7 +257,7 @@ impl OtExtensionReceiver {
 }
 
 impl RotReceiver for OtExtensionReceiver {
-    type Error = ();
+    type Error = Error;
 
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     async fn receive(&mut self, choices: &[Choice]) -> Result<Vec<Block>, Self::Error> {
@@ -256,10 +272,9 @@ impl RotReceiver for OtExtensionReceiver {
         );
 
         if !self.has_base_ots() {
-            self.do_base_ots().await.unwrap();
+            self.do_base_ots().await?;
         }
-        let batches = count / batch_size;
-        let cols_byte_all = count / 8;
+
         let cols_byte_batch = batch_size / 8;
 
         let choice_vec = choices_to_u8_vec(choices);
@@ -269,7 +284,7 @@ impl RotReceiver for OtExtensionReceiver {
         let (ret_s, ret_r) = oneshot::channel();
 
         let mut base_rngs = mem::take(&mut self.base_rngs);
-        thread::spawn(move || {
+        let jh = thread::spawn(move || {
             let mut output = allocate_zeroed_vec(count);
             let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
 
@@ -286,22 +301,33 @@ impl RotReceiver for OtExtensionReceiver {
                     for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
                         *v2 ^= *v1 ^ *choices;
                     }
-                    ch_s.send(send_row).unwrap();
+                    if ch_s.send(send_row).is_err() {
+                        // async task including ch_r is dropped, so we stop the thread
+                        return;
+                    }
                 }
                 let output_bytes = bytemuck::cast_slice_mut(output_chunk);
                 transpose_bitmatrix(&t_mat, output_bytes, BASE_OT_COUNT);
                 FIXED_KEY_HASH.cr_hash_slice_mut(output_chunk);
             }
 
-            ret_s.send((output, base_rngs)).unwrap();
+            // ignore error, as this means the async task was dropped
+            let _ = ret_s.send((output, base_rngs));
         });
 
-        let (mut send, _) = sub_conn.byte_stream().await.unwrap();
+        let (mut send, _) = sub_conn.byte_stream().await?;
         while let Some(row) = ch_r.recv().await {
-            send.write_all(&row).await.unwrap();
+            send.write_all(&row).await.map_err(Error::Send)?;
         }
 
-        let (output, base_rngs) = ret_r.await.unwrap();
+        let Ok((output, base_rngs)) = ret_r.await else {
+            match jh.join() {
+                Err(err) => resume_unwind(err),
+                Ok(_) => {
+                    unreachable!("ret_r.await failed but thread did not panic. This is a bug.")
+                }
+            }
+        };
         self.base_rngs = base_rngs;
         Ok(output)
     }

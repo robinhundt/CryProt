@@ -48,7 +48,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     let count = 2_usize.pow(24);
-    c.bench_function("2**24 extension OTs", |b| {
+    let mut g = c.benchmark_group("OT extension");
+    g.sample_size(10);
+    g.bench_function("2**24 extension OTs", |b| {
         b.to_async(&rt).iter_custom(|iters| {
             let mut c11 = c1.sub_connection();
             let mut c22 = c2.sub_connection();
@@ -84,7 +86,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 
     let count = 2_usize.pow(24);
-    c.bench_function("2 parallel 2**24 extension OTs", |b| {
+    g.bench_function("2 parallel 2**24 extension OTs", |b| {
         b.to_async(&rt).iter_custom(|iters| {
             let mut c11 = c1.sub_connection();
             let mut c22 = c2.sub_connection();

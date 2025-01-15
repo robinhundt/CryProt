@@ -30,7 +30,6 @@ unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
 
 // Transpose a 2^block_size_shift x 2^block_size_shift block within a larger
 // matrix Only handles first two rows out of every 2^block_rows_shift rows
-
 #[inline(always)] // in each block
 unsafe fn avx_transpose_block_iter1(
     in_out: *mut __m256i,

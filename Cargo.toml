@@ -23,3 +23,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 [profile.profiling]
 debug = true
 inherits = "release"
+
+[profile.optimized-release]
+codegen-units = 1
+inherits = "release"
+lto = "fat"

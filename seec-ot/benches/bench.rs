@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
-use seec_core::test_utils::init_bench_tracing;
+use seec_core::{test_utils::init_bench_tracing, utils::allocate_zeroed_vec};
 use seec_net::testing::local_conn;
 use seec_ot::{
     base::SimplestOt,
@@ -57,6 +57,8 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             async move {
                 let mut duration = Duration::ZERO;
+                let mut sender_ots = allocate_zeroed_vec(count);
+                let mut receiver_ots = allocate_zeroed_vec(count);
                 for _ in 0..iters {
                     // setup not included in duration
                     let (mut sender, mut receiver, choices) = {
@@ -71,14 +73,21 @@ fn criterion_benchmark(c: &mut Criterion) {
                         (sender, receiver, choices)
                     };
                     let now = Instant::now();
-                    let (a, b) = tokio::try_join!(
-                        tokio::spawn(async move { sender.send(count).await }),
-                        tokio::spawn(async move { receiver.receive(&choices).await })
+                    (sender_ots, receiver_ots) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender.send_into(&mut sender_ots).await.unwrap();
+                            sender_ots
+                        }),
+                        tokio::spawn(async move {
+                            receiver
+                                .receive_into(&choices, &mut receiver_ots)
+                                .await
+                                .unwrap();
+                            receiver_ots
+                        })
                     )
                     .unwrap();
                     duration += now.elapsed();
-                    a.unwrap();
-                    b.unwrap();
                 }
                 duration
             }

@@ -50,7 +50,8 @@ impl RotSender for SimplestOt {
 
     #[allow(non_snake_case)]
     #[tracing::instrument(level = Level::DEBUG, skip(self))]
-    async fn send(&mut self, count: usize) -> Result<Vec<[Block; 2]>, Self::Error> {
+    async fn send_into(&mut self, ots: &mut Vec<[Block; 2]>) -> Result<(), Self::Error> {
+        let count = ots.len();
         let a = Scalar::random(&mut self.rng);
         let mut A = RISTRETTO_BASEPOINT_TABLE * &a;
         let seed: Block = self.rng.gen();
@@ -79,18 +80,14 @@ impl RotSender for SimplestOt {
         }
 
         A *= a;
-        let ots = B_points
-            .into_iter()
-            .enumerate()
-            .map(|(i, mut B)| {
-                B *= a;
-                let k0 = ro_hash_point(&B, i, seed);
-                B -= A;
-                let k1 = ro_hash_point(&B, i, seed);
-                [k0, k1]
-            })
-            .collect();
-        Ok(ots)
+        for (i, (mut B, ots)) in B_points.into_iter().zip(ots).enumerate() {
+            B *= a;
+            let k0 = ro_hash_point(&B, i, seed);
+            B -= A;
+            let k1 = ro_hash_point(&B, i, seed);
+            *ots = [k0, k1];
+        }
+        Ok(())
     }
 }
 
@@ -99,7 +96,12 @@ impl RotReceiver for SimplestOt {
 
     #[allow(non_snake_case)]
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
-    async fn receive(&mut self, choices: &[Choice]) -> Result<Vec<Block>, Self::Error> {
+    async fn receive_into(
+        &mut self,
+        choices: &[Choice],
+        ots: &mut Vec<Block>,
+    ) -> Result<(), Self::Error> {
+        assert_eq!(choices.len(), ots.len());
         let (mut send, mut recv) = self.conn.byte_stream().await?;
         let (A, commitment): (RistrettoPoint, [u8; 32]) = {
             let mut recv_m1 = recv.as_stream();
@@ -128,15 +130,11 @@ impl RotReceiver for SimplestOt {
         if Hash::from_bytes(commitment) != seed.ro_hash() {
             return Err(Error::CommitmentHashesNotEqual);
         }
-        let ots = b_points
-            .into_iter()
-            .enumerate()
-            .map(|(i, b)| {
-                let B = A * b;
-                ro_hash_point(&B, i, seed)
-            })
-            .collect();
-        Ok(ots)
+        for (i, (b, ot)) in b_points.into_iter().zip(ots).enumerate() {
+            let B = A * b;
+            *ot = ro_hash_point(&B, i, seed);
+        }
+        Ok(())
     }
 }
 
@@ -155,7 +153,6 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    
     use rand::{rngs::StdRng, SeedableRng};
     use seec_core::test_utils::init_tracing;
     use seec_net::testing::local_conn;

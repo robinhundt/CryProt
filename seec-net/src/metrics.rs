@@ -213,8 +213,8 @@ impl SubCommData {
 
 impl AddAssign for Counter {
     fn add_assign(&mut self, rhs: Self) {
-        self.bytes += dbg!(rhs.bytes);
-        self.bytes_with_sub_comm += dbg!(rhs.bytes_with_sub_comm);
+        self.bytes += rhs.bytes;
+        self.bytes_with_sub_comm += rhs.bytes_with_sub_comm;
     }
 }
 
@@ -263,7 +263,7 @@ impl CommEventVisitor {
         T: TryInto<u64>,
         T::Error: Debug,
     {
-        let name = dbg!(field.name());
+        let name = field.name();
         if name != "bytes_written" && name != "bytes_read" {
             return;
         }

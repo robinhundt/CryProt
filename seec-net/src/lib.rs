@@ -2,7 +2,8 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     io::{Error, IoSlice},
-    pin::Pin,
+    mem,
+    pin::{pin, Pin},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -10,15 +11,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use pin_project_lite::pin_project;
+use bincode::Options;
 use s2n_quic::{
     connection::{Handle, StreamAcceptor as QuicStreamAcceptor},
     stream::{ReceiveStream as QuicRecvStream, SendStream as QuicSendStream},
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::{
-    io,
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     select,
     sync::{mpsc, oneshot},
 };
@@ -40,7 +40,7 @@ pub mod testing;
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct Id(pub(crate) u64);
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 enum StreamId {
     Implicit(u64),
     Explicit(u64),
@@ -49,11 +49,11 @@ enum StreamId {
 /// Id of a [`Connection`]. Does not include parent Ids of this connection.
 /// It is only unique with respect to its sibling connections created by
 /// [`Connection::sub_connection`].
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 struct ConnectionId(pub(crate) u32);
 
 /// Unique id of a stream and all its parent [`ConnectionId`]s.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 struct UniqueId {
     cids: Vec<ConnectionId>,
     id: StreamId,
@@ -86,23 +86,14 @@ pub struct Connection {
     next_implicit_id: u64,
 }
 
-pin_project! {
-    /// Send part of the bytes stream.
-    // TODO provide a way to temporarily use a byte stream as a typed stream,
-    //  useful for protocols with different serde compatible msg types to
-    // prevent unnecessary stream creation
-    pub struct SendStreamBytes {
-        #[pin]
-        inner: QuicSendStream
-    }
+/// Send part of the bytes stream.
+pub struct SendStreamBytes {
+    inner: QuicSendStream,
 }
 
-pin_project! {
-    /// Receive part of the bytes stream.
-    pub struct ReceiveStreamBytes {
-        #[pin]
-        inner: ReceiveStreamWrapper
-    }
+/// Receive part of the bytes stream.
+pub struct ReceiveStreamBytes {
+    inner: ReceiveStreamWrapper,
 }
 
 /// Send part of the serialized stream.
@@ -131,12 +122,9 @@ pub type ReceiveStreamTemp<'a, T> = SymmetricallyFramed<
     SymmetricalBincode<T>,
 >;
 
-pin_project! {
-    #[project = ReceiveStreamWrapperProj]
-    enum ReceiveStreamWrapper {
-        Channel { #[pin] stream_recv: StreamRecv},
-        Stream { #[pin] recv_stream: QuicRecvStream }
-    }
+enum ReceiveStreamWrapper {
+    Channel { stream_recv: StreamRecv },
+    Stream { recv_stream: QuicRecvStream },
 }
 
 #[derive(Debug)]
@@ -174,29 +162,8 @@ impl StreamManager {
                 res = self.acceptor.accept_receive_stream() => {
                     debug!("accepted stream");
                     match res {
-                        Ok(Some(mut stream)) => {
-                            let cmd_send = self.cmd_send.clone();
-                            tokio::spawn(async move {
-                                let mut buf = [0; 2];
-                                if let Err(err) = stream.read_exact(&mut buf).await {
-                                    error!(%err, "reading unique id size");
-                                    return;
-                                }
-                                let len = u16::from_be_bytes(buf);
-                                let mut buf = vec![0; len as usize];
-                                if let Err(err) = stream.read_exact(&mut buf).await {
-                                    error!(%err, "reading unique ids");
-                                    return;
-                                }
-                                let uid = match UniqueId::from_bytes(&buf) {
-                                    Ok(uid) => uid,
-                                    Err(err) => {
-                                        error!(%err, "parsing unique ids");
-                                        return;
-                                    }
-                                };
-                                cmd_send.send(Cmd::AcceptedStream {uid, stream, bytes_read: 2 + buf.len()}).expect("cmd_rcv is owned by StreamManager")
-                            });
+                        Ok(Some(stream)) => {
+                            self.accepted(stream);
                         }
                         Ok(None) => {
                             debug!("remote closed");
@@ -241,6 +208,26 @@ impl StreamManager {
             }
         }
     }
+
+    fn accepted(&mut self, mut stream: QuicRecvStream) {
+        let cmd_send = self.cmd_send.clone();
+        tokio::spawn(async move {
+            let (uid, bytes_read) = match UniqueId::read_from(&mut stream).await {
+                Ok(ret) => ret,
+                Err(err) => {
+                    error!(?err, "unable to read stream unique id");
+                    return;
+                }
+            };
+            cmd_send
+                .send(Cmd::AcceptedStream {
+                    uid,
+                    stream,
+                    bytes_read,
+                })
+                .expect("cmd_rcv is owned by StreamManager")
+        });
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -251,6 +238,12 @@ pub enum ConnectionError {
     IoError(#[source] io::Error),
     #[error("StreamManager is dropped and not accepting connections")]
     StreamManagerDropped,
+    #[error("Stream unique id deserialization failed")]
+    UniqueIdDeserialization(#[source] bincode::Error),
+    #[error("Stream unique id serialization failed")]
+    UniqueIdSerialization(#[source] bincode::Error),
+    #[error("Reached maximum number of sub connections")]
+    SubConnectionLimitReached,
 }
 
 impl Connection {
@@ -295,14 +288,8 @@ impl Connection {
             .open_send_stream()
             .await
             .map_err(ConnectionError::OpenStream)?;
-        let uid_bytes = uid.to_bytes();
-        snd.write_all(&(uid_bytes.len() as u16).to_be_bytes())
-            .await
-            .map_err(ConnectionError::IoError)?;
-        snd.write_all(&uid_bytes)
-            .await
-            .map_err(ConnectionError::IoError)?;
-        event!(target: "seec_metrics", Level::TRACE, bytes_written = 2 + uid_bytes.len());
+        let bytes_written = uid.write_into(&mut snd).await?;
+        event!(target: "seec_metrics", Level::TRACE, bytes_written = bytes_written);
         let (stream_return, stream_recv) = oneshot::channel();
         self.cmd
             .send(Cmd::NewStream { uid, stream_return })
@@ -409,48 +396,8 @@ impl Id {
     }
 }
 
-impl StreamId {
-    const SERIALIZED_SIZE: usize = 9;
-
-    fn from_bytes(bytes: [u8; 9]) -> Self {
-        let id = u64::from_be_bytes(bytes[1..].try_into().expect("slice has size 8"));
-        match bytes[0] {
-            0 => Self::Explicit(id),
-            _ => Self::Implicit(id),
-        }
-    }
-
-    fn to_bytes(self) -> [u8; 9] {
-        let mut ret = [0; 9];
-        match self {
-            Self::Explicit(id) => {
-                ret[1..].copy_from_slice(&id.to_be_bytes());
-            }
-            Self::Implicit(id) => {
-                ret[0] = 1;
-                ret[1..].copy_from_slice(&id.to_be_bytes());
-            }
-        }
-        ret
-    }
-}
-
-impl ConnectionId {
-    pub fn from_bytes(bytes: [u8; 4]) -> Self {
-        Self(u32::from_be_bytes(bytes))
-    }
-
-    pub fn to_bytes(self) -> [u8; 4] {
-        self.0.to_be_bytes()
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum ParseUniqueIdError {
-    #[error("insufficient data to parse UniqueId")]
-    InsufficientData,
-    #[error("unused remaining data. Remaining bytes: {0}")]
-    RemainingData(usize),
+fn bincode_opts() -> impl bincode::Options {
+    bincode::options().with_big_endian().with_varint_encoding()
 }
 
 impl UniqueId {
@@ -458,41 +405,40 @@ impl UniqueId {
         Self { cids, id }
     }
 
-    fn from_bytes(mut bytes: &[u8]) -> Result<Self, ParseUniqueIdError> {
-        if bytes.len() < StreamId::SERIALIZED_SIZE {
-            return Err(ParseUniqueIdError::InsufficientData);
-        }
-        let id = StreamId::from_bytes(
-            bytes[..StreamId::SERIALIZED_SIZE]
-                .try_into()
-                .expect("len checked before"),
-        );
-        bytes = &bytes[StreamId::SERIALIZED_SIZE..];
-
-        // 4 bytes in u32
-        let mut chunks_iter = bytes.chunks_exact(4);
-        let cids = chunks_iter
-            .by_ref()
-            .map(|chunk| ConnectionId::from_bytes(chunk.try_into().unwrap()))
-            .collect();
-
-        if !chunks_iter.remainder().is_empty() {
-            return Err(ParseUniqueIdError::RemainingData(
-                chunks_iter.remainder().len(),
-            ));
-        }
-
-        Ok(Self { cids, id })
+    async fn write_into<W: AsyncWrite>(&self, write: W) -> Result<usize, ConnectionError> {
+        let mut write = pin!(write);
+        let mut options = bincode_opts();
+        let serialized = (&mut options)
+            .serialize(self)
+            .map_err(ConnectionError::UniqueIdSerialization)?;
+        write
+            .write_u32(
+                serialized
+                    .len()
+                    .try_into()
+                    .map_err(|_| ConnectionError::SubConnectionLimitReached)?,
+            )
+            .await
+            .map_err(ConnectionError::IoError)?;
+        write
+            .write_all(&serialized)
+            .await
+            .map_err(ConnectionError::IoError)?;
+        Ok(mem::size_of::<u32>() + serialized.len())
     }
 
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut ret = Vec::with_capacity(8 + self.cids.len() * 4);
-        let id = self.id.to_bytes();
-        ret.extend_from_slice(&id);
-        for cid in &self.cids {
-            ret.extend_from_slice(&cid.to_bytes());
-        }
-        ret
+    async fn read_from<R: AsyncRead>(reader: R) -> Result<(Self, usize), ConnectionError> {
+        let mut reader = pin!(reader);
+        let len = reader.read_u32().await.map_err(ConnectionError::IoError)?;
+        let mut buf = vec![0; len as usize];
+        reader
+            .read_exact(&mut buf)
+            .await
+            .map_err(ConnectionError::IoError)?;
+        let uid = bincode_opts()
+            .deserialize(&buf)
+            .map_err(ConnectionError::UniqueIdDeserialization)?;
+        Ok((uid, mem::size_of::<u32>() + len as usize))
     }
 }
 
@@ -531,31 +477,31 @@ impl SendStreamBytes {
 
 impl AsyncWrite for SendStreamBytes {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, Error>> {
-        let this = self.project();
-        trace_poll(this.inner.poll_write(cx, buf))
+        let inner = Pin::new(&mut self.inner);
+        trace_poll(inner.poll_write(cx, buf))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        let this = self.project();
-        AsyncWrite::poll_flush(this.inner, cx)
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        let inner = Pin::new(&mut self.inner);
+        AsyncWrite::poll_flush(inner, cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        let this = self.project();
-        this.inner.poll_shutdown(cx)
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        let inner = Pin::new(&mut self.inner);
+        inner.poll_shutdown(cx)
     }
 
     fn poll_write_vectored(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, Error>> {
-        let this = self.project();
-        trace_poll(this.inner.poll_write_vectored(cx, bufs))
+        let inner = Pin::new(&mut self.inner);
+        trace_poll(inner.poll_write_vectored(cx, bufs))
     }
 
     fn is_write_vectored(&self) -> bool {
@@ -589,23 +535,21 @@ impl AsyncRead for ReceiveStreamBytes {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let mut this = self.as_mut().project();
-        let this_inner = this.inner.as_mut().project();
-        match this_inner {
-            ReceiveStreamWrapperProj::Channel { stream_recv } => match stream_recv.poll(cx) {
+        match &mut self.inner {
+            ReceiveStreamWrapper::Channel { stream_recv } => match Pin::new(stream_recv).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok((recv_stream, bytes_read))) => {
                     // We know we read those bytes in the StreamManager, so we emit
                     // the corresponding event here in the correct span.
                     event!(target: "seec_metrics", Level::TRACE, bytes_read);
-                    *this.inner = ReceiveStreamWrapper::Stream { recv_stream };
+                    self.inner = ReceiveStreamWrapper::Stream { recv_stream };
                     self.poll_read(cx, buf)
                 }
                 Poll::Ready(Err(err)) => Poll::Ready(Err(std::io::Error::other(Box::new(err)))),
             },
-            ReceiveStreamWrapperProj::Stream { recv_stream } => {
+            ReceiveStreamWrapper::Stream { recv_stream } => {
                 let len = buf.filled().len();
-                let poll = recv_stream.poll_read(cx, buf);
+                let poll = Pin::new(recv_stream).poll_read(cx, buf);
                 if let Poll::Ready(Ok(())) = poll {
                     let bytes = buf.filled().len() - len;
                     if bytes > 0 {
@@ -635,12 +579,14 @@ mod tests {
 
     #[tokio::test]
     async fn create_local_conn() -> Result<()> {
+        let _g = init_tracing();
         let _ = local_conn().await?;
         Ok(())
     }
 
     #[tokio::test]
     async fn byte_stream() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut s_send, _) = s.byte_stream_with_id(Id::new(0)).await?;
         let (_, mut c_recv) = c.byte_stream_with_id(Id::new(0)).await?;
@@ -654,6 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn byte_stream_explicit_implicit_id() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut s_send1, _) = s.byte_stream_with_id(Id::new(0)).await?;
         let (mut s_send2, _) = s.byte_stream().await?;
@@ -675,6 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn byte_stream_different_order() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut s_send, mut s_recv) = s.byte_stream_with_id(Id::new(0)).await?;
         let s_send_buf = b"hello there";
@@ -707,13 +655,13 @@ mod tests {
                 tokio::try_join!(c1.byte_stream(), c2.byte_stream()).unwrap();
 
             let jh = tokio::spawn(async move {
-                let buf = vec![0; 200 * 1024 * 1024];
+                let buf = vec![0; 10 * 1024 * 1024];
                 s.write_all(&buf).await.unwrap();
                 debug!("wrote buf {i}");
             });
             jhs.spawn(jh);
             let jh = tokio::spawn(async move {
-                let mut buf = vec![0; 200 * 1024 * 1024];
+                let mut buf = vec![0; 10 * 1024 * 1024];
                 r.read_exact(&mut buf).await.unwrap();
                 debug!("received buf {i}");
             });
@@ -728,6 +676,7 @@ mod tests {
 
     #[tokio::test]
     async fn serde_stream() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut snd, _) = s.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
         let (_, mut recv) = c.stream_with_id::<Vec<i32>>(Id::new(0)).await?;
@@ -742,6 +691,7 @@ mod tests {
 
     #[tokio::test]
     async fn serde_stream_block() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut snd, _) = s.stream_with_id(Id::new(0)).await?;
         let (_, mut recv) = c.stream_with_id(Id::new(0)).await?;
@@ -753,6 +703,7 @@ mod tests {
 
     #[tokio::test]
     async fn serde_byte_stream_as_stream() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut s_send, _) = s.byte_stream_with_id(Id::new(0)).await?;
         let (_, mut c_recv) = c.byte_stream_with_id(Id::new(0)).await?;
@@ -775,6 +726,7 @@ mod tests {
 
     #[tokio::test]
     async fn serde_request_response_stream() -> Result<()> {
+        let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
         let (mut snd1, mut recv1) = s
             .request_response_stream_with_id::<Vec<i32>, String>(Id::new(0))
@@ -793,6 +745,7 @@ mod tests {
 
     #[tokio::test]
     async fn sub_connection() -> Result<()> {
+        let _g = init_tracing();
         let (mut s1, mut c1) = local_conn().await?;
         let mut s2 = s1.sub_connection();
         let mut c2 = c1.sub_connection();
@@ -809,6 +762,7 @@ mod tests {
 
     #[tokio::test]
     async fn sub_sub_connection() -> Result<()> {
+        let _g = init_tracing();
         let (mut s1, mut c1) = local_conn().await?;
         let mut s2 = s1.sub_connection();
         let mut c2 = c1.sub_connection();

@@ -45,5 +45,24 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "tokio-rayon")]
+fn bench_spawn_compute(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    c.bench_function("spawn_compute overhead", |b| {
+        b.to_async(&rt).iter(|| async {
+            let jh = seec_core::tokio_rayon::spawn_compute(|| 42);
+            assert_eq!(42, jh.await);
+        });
+    });
+}
+
+#[cfg(not(feature = "tokio-rayon"))]
 criterion_group!(benches, criterion_benchmark);
+
+#[cfg(feature = "tokio-rayon")]
+criterion_group!(benches, criterion_benchmark, bench_spawn_compute);
+
 criterion_main!(benches);

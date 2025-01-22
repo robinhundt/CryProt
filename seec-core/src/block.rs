@@ -4,7 +4,7 @@ use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
-use subtle::Choice;
+use subtle::{Choice, ConditionallySelectable};
 use wide::u8x16;
 
 use crate::random_oracle::RandomOracle;
@@ -18,9 +18,11 @@ impl Block {
     pub const ZERO: Self = Self(u8x16::ZERO);
     pub const ONES: Self = Self(u8x16::MAX);
 
+    pub const BITS: usize = 128;
+
     #[inline]
-    pub const fn new(bits: [u8; 16]) -> Self {
-        Self(u8x16::new(bits))
+    pub const fn new(bytes: [u8; 16]) -> Self {
+        Self(u8x16::new(bytes))
     }
 
     #[inline]
@@ -149,5 +151,37 @@ impl From<cipher::Array<u8, sizes::U16>> for Block {
     #[inline]
     fn from(value: cipher::Array<u8, sizes::U16>) -> Self {
         Self::new(value.0)
+    }
+}
+
+impl ConditionallySelectable for Block {
+    #[inline]
+    // adapted from https://github.com/dalek-cryptography/subtle/blob/369e7463e85921377a5f2df80aabcbbc6d57a930/src/lib.rs#L510-L517
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        // if choice = 0, mask = (-0) = 0000...0000
+        // if choice = 1, mask = (-1) = 1111...1111
+        let mask = Block::new((-(choice.unwrap_u8() as i128)).to_le_bytes());
+        *a ^ (mask & (*a ^ *b))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use subtle::{Choice, ConditionallySelectable};
+
+    use crate::Block;
+
+    #[test]
+    fn test_block_cond_select() {
+        let choice = Choice::from(0);
+        assert_eq!(
+            Block::ZERO,
+            Block::conditional_select(&Block::ZERO, &Block::ONES, choice)
+        );
+        let choice = Choice::from(1);
+        assert_eq!(
+            Block::ONES,
+            Block::conditional_select(&Block::ZERO, &Block::ONES, choice)
+        );
     }
 }

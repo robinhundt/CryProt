@@ -1,4 +1,4 @@
-use std::{io, iter, mem};
+use std::{io, iter, mem, u8};
 
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use seec_core::{
@@ -6,11 +6,11 @@ use seec_core::{
     aes_rng::AesRng,
     tokio_rayon::spawn_compute,
     transpose::transpose_bitmatrix,
-    utils::{allocate_zeroed_vec, xor_inplace},
+    utils::{allocate_zeroed_vec, and_inplace_elem, xor_inplace},
     Block,
 };
 use seec_net::{Connection, ConnectionError};
-use subtle::Choice;
+use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::mpsc,
@@ -133,7 +133,7 @@ impl RotSender for OtExtensionSender {
         let mut sub_conn = self.conn.sub_connection();
 
         // channel for communication between async task and compute thread
-        let (ch_s, ch_r) = std::sync::mpsc::channel::<Vec<u8>>();
+        let (ch_s, ch_r) = std::sync::mpsc::channel::<Vec<Block>>();
         // take these to move them into compute thread, will be returned via ret channel
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let base_choices = mem::take(&mut self.base_choices);
@@ -145,7 +145,6 @@ impl RotSender for OtExtensionSender {
         let jh = spawn_compute(move || {
             let mut ots = owned_ots;
             let mut transposed = allocate_zeroed_vec::<Block>(batch_size);
-            let zero_row = vec![0_u8; cols_byte_batch];
 
             // to increase throughput, we divide the `count` many OTs into batches of size
             // self.batch_size(). Crucially, this allows us to do the transpose
@@ -163,17 +162,22 @@ impl RotSender for OtExtensionSender {
                     row_iter.zip(&mut base_rngs).zip(&base_choices)
                 {
                     base_rng.fill_bytes(v_row);
-                    let Ok(recv_row) = ch_r.recv() else {
+                    let Ok(mut recv_row) = ch_r.recv() else {
                         // ch_s was dropped before completion, stop thread
                         return None;
                     };
-                    // The following is a best-effort constant time implementation
-                    let xor_row = if base_choice.unwrap_u8() == 0 {
-                        &zero_row
-                    } else {
-                        &recv_row
-                    };
-                    xor_inplace(v_row, xor_row);
+                    // constant time version of
+                    // if !base_choice {
+                    //   v_row ^= recv_row;
+                    // }
+                    let choice_mask = Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
+                    // if choice_mask == 0, we zero out recv_row
+                    // if choice_mask == 1, recv_row is not changed
+                    and_inplace_elem(&mut recv_row, choice_mask);
+                    let v_row = bytemuck::cast_slice_mut(v_row);
+                    // if choice_mask == 0, v_row = v_row ^ 000000..
+                    // if choice_mask == 1, v_row = v_row ^ recv_row
+                    xor_inplace(v_row, &recv_row);
                 }
                 {
                     let transposed = bytemuck::cast_slice_mut(&mut transposed);
@@ -181,7 +185,6 @@ impl RotSender for OtExtensionSender {
                 }
 
                 for (v, ots) in transposed.iter().zip(ot_batch.iter_mut()) {
-                    // unsafe { _mm_prefetch(ots.as_ptr().add(4) as *const _, _MM_HINT_ET0) };
                     *ots = [*v, *v ^ delta]
                 }
 
@@ -196,8 +199,8 @@ impl RotSender for OtExtensionSender {
         for batch_size in batch_sizes {
             let cols_byte_batch = batch_size / 8;
             for _ in 0..BASE_OT_COUNT {
-                let mut recv_row = vec![0; cols_byte_batch];
-                recv.read_exact(&mut recv_row)
+                let mut recv_row = allocate_zeroed_vec(batch_size / Block::BITS);
+                recv.read_exact(bytemuck::cast_slice_mut(&mut recv_row))
                     .await
                     .map_err(Error::Receive)?;
                 if ch_s.send(recv_row).is_err() {

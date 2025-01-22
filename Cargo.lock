@@ -1707,7 +1707,6 @@ dependencies = [
  "criterion",
  "hybrid-array",
  "libc",
- "pin-project-lite",
  "proptest",
  "rand 0.8.5",
  "rand_core 0.6.4",
@@ -1725,9 +1724,9 @@ name = "seec-net"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "criterion",
  "futures",
- "pin-project-lite",
  "s2n-quic",
  "seec-core",
  "serde",
@@ -1758,6 +1757,10 @@ dependencies = [
  "tokio",
  "tracing",
 ]
+
+[[package]]
+name = "seec-vm"
+version = "0.1.0"
 
 [[package]]
 name = "semver"

@@ -26,7 +26,7 @@ use tokio_serde::{
     formats::{Bincode, SymmetricalBincode},
     SymmetricallyFramed,
 };
-use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+use tokio_util::codec::{length_delimited, FramedRead, FramedWrite, LengthDelimitedCodec};
 use tracing::{debug, error, event, Level};
 
 #[cfg(feature = "metrics")]
@@ -358,12 +358,8 @@ impl Connection {
         id: StreamId,
     ) -> Result<(SendStream<T>, ReceiveStream<S>), ConnectionError> {
         let (send_bytes, recv_bytes) = self.internal_byte_stream(id).await?;
-        let mut ld_codec = LengthDelimitedCodec::builder();
-        // TODO what is a sensible max length?
-        const MB: usize = 1024 * 1024;
-        ld_codec.max_frame_length(256 * MB);
-        let framed_send = ld_codec.new_write(send_bytes);
-        let framed_read = ld_codec.new_read(recv_bytes);
+        let framed_send = default_codec().new_write(send_bytes);
+        let framed_read = default_codec().new_read(recv_bytes);
         let serde_send = SymmetricallyFramed::new(framed_send, Bincode::default());
         let serde_read = SymmetricallyFramed::new(framed_read, Bincode::default());
         Ok((serde_send, serde_read))
@@ -466,11 +462,7 @@ impl SendStreamBytes {
     }
 
     pub fn as_stream<T: Serialize>(&mut self) -> TempSendStream<T> {
-        let mut ld_codec = LengthDelimitedCodec::builder();
-        // TODO what is a sensible max length?
-        const MB: usize = 1024 * 1024;
-        ld_codec.max_frame_length(256 * MB);
-        let framed_send = ld_codec.new_write(self);
+        let framed_send = default_codec().new_write(self);
         SymmetricallyFramed::new(framed_send, Bincode::default())
     }
 }
@@ -518,11 +510,7 @@ fn trace_poll(p: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
 
 impl ReceiveStreamBytes {
     pub fn as_stream<T: DeserializeOwned>(&mut self) -> ReceiveStreamTemp<T> {
-        let mut ld_codec = LengthDelimitedCodec::builder();
-        // TODO what is a sensible max length?
-        const MB: usize = 1024 * 1024;
-        ld_codec.max_frame_length(256 * MB);
-        let framed_read = ld_codec.new_read(self);
+        let framed_read = default_codec().new_read(self);
         SymmetricallyFramed::new(framed_read, Bincode::default())
     }
 }
@@ -560,6 +548,13 @@ impl AsyncRead for ReceiveStreamBytes {
             }
         }
     }
+}
+
+fn default_codec() -> length_delimited::Builder {
+    let mut ld_codec = LengthDelimitedCodec::builder();
+    const MB: usize = 1024 * 1024;
+    ld_codec.max_frame_length(20 * MB);
+    ld_codec
 }
 
 #[cfg(test)]

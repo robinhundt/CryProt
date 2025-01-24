@@ -1,0 +1,7 @@
+[package]
+name = "seec-pprf"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+seec-core.workspace = true

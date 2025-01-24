@@ -1,5 +1,5 @@
 [workspace]
-members = ["seec-core", "seec-net", "seec-ot", "seec-vm"]
+members = ["seec-core", "seec-net", "seec-ot", "seec-pprf"]
 resolver = "2"
 
 [workspace.dependencies]

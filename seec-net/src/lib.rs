@@ -319,7 +319,7 @@ impl Connection {
     }
 
     /// Establish a typed stream over this connection.
-    async fn internal_stream<T: Serialize + DeserializeOwned>(
+    async fn internal_stream<'a, T: Serialize + Deserialize<'a>>(
         &mut self,
         id: StreamId,
     ) -> Result<(SendStream<T>, ReceiveStream<T>), ConnectionError> {
@@ -336,7 +336,7 @@ impl Connection {
     }
 
     /// Establish a typed stream over this connection.
-    pub async fn stream<T: Serialize + DeserializeOwned>(
+    pub async fn stream<'a, T: Serialize + Deserialize<'a>>(
         &mut self,
     ) -> Result<(SendStream<T>, ReceiveStream<T>), ConnectionError> {
         self.next_implicit_id += 1;
@@ -694,6 +694,22 @@ mod tests {
         let ret: Vec<_> = recv.next().await.context("recv")??;
         assert_eq!(vec![u8::MAX; 16], ret);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn serde_stream_non_owned() -> Result<()> {
+        #[derive(PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+        struct NonOwned<'a> {
+            a: &'a [u8],
+        }
+        let _g = init_tracing();
+        let (mut s, mut c) = local_conn().await?;
+        let (mut snd, _) = s.stream().await?;
+        let (_, mut recv) = c.stream().await?;
+        snd.send(NonOwned { a: &[1, 2, 3] }).await?;
+        let ret= recv.next().await.context("recv")??;
+        assert_eq!(NonOwned { a: &[1, 2, 3] }, ret);
+        todo!()
     }
 
     #[tokio::test]

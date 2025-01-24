@@ -1759,8 +1759,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "seec-vm"
+name = "seec-pprf"
 version = "0.1.0"
+dependencies = [
+ "seec-core",
+]
 
 [[package]]
 name = "semver"

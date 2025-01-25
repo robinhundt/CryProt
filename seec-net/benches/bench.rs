@@ -1,8 +1,7 @@
 use std::time::Instant;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use seec_core::test_utils::init_bench_tracing;
-use seec_net::testing::local_conn;
+use seec_net::testing::{init_bench_tracing, local_conn};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     join,

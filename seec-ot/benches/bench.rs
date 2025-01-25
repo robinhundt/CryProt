@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
-use seec_core::{test_utils::init_bench_tracing, utils::allocate_zeroed_vec};
-use seec_net::testing::local_conn;
+use seec_core::utils::allocate_zeroed_vec;
+use seec_net::testing::{init_bench_tracing, local_conn};
 use seec_ot::{
     base::SimplestOt,
     extension::{OtExtensionReceiver, OtExtensionSender},

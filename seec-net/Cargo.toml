@@ -4,7 +4,7 @@ name = "seec-net"
 version = "0.1.0"
 
 [features]
-__testing = ["anyhow"]
+__testing = ["metrics", "dep:anyhow"]
 metrics = ["dep:tracing-subscriber", "serde/derive"]
 
 [dependencies]

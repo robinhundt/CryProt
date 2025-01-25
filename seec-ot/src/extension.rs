@@ -1,4 +1,4 @@
-use std::{io, iter, mem, u8};
+use std::{io, iter, mem};
 
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use seec_core::{
@@ -18,8 +18,7 @@ use tokio::{
 use tracing::Level;
 
 use crate::{
-    base::{self, SimplestOt},
-    random_choices, RotReceiver, RotSender,
+    base::{self, SimplestOt}, phase, random_choices, RotReceiver, RotSender
 };
 
 pub const BASE_OT_COUNT: usize = 128;
@@ -108,6 +107,7 @@ impl RotSender for OtExtensionSender {
     /// - If `count` is not divisable by 128.
     /// - If `count % self.batch_size()` is not divisable by 128.
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::OT_EXTENSION))]
     async fn send_into(&mut self, ots: &mut Vec<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
         assert_eq!(0, count % 128, "count must be multiple of 128");
@@ -129,7 +129,6 @@ impl RotSender for OtExtensionSender {
         }
 
         let delta = self.delta.expect("base OTs are done");
-        let cols_byte_batch = batch_size / 8;
         let mut sub_conn = self.conn.sub_connection();
 
         // channel for communication between async task and compute thread
@@ -170,7 +169,8 @@ impl RotSender for OtExtensionSender {
                     // if !base_choice {
                     //   v_row ^= recv_row;
                     // }
-                    let choice_mask = Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
+                    let choice_mask =
+                        Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
                     // if choice_mask == 0, we zero out recv_row
                     // if choice_mask == 1, recv_row is not changed
                     and_inplace_elem(&mut recv_row, choice_mask);
@@ -197,7 +197,6 @@ impl RotSender for OtExtensionSender {
         let (_, mut recv) = sub_conn.byte_stream().await?;
 
         for batch_size in batch_sizes {
-            let cols_byte_batch = batch_size / 8;
             for _ in 0..BASE_OT_COUNT {
                 let mut recv_row = allocate_zeroed_vec(batch_size / Block::BITS);
                 recv.read_exact(bytemuck::cast_slice_mut(&mut recv_row))
@@ -273,6 +272,7 @@ impl RotReceiver for OtExtensionReceiver {
     /// - If `choices.len()` is not divisable by 128.
     /// - If `choices.len() % self.batch_size()` is not divisable by 128.
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::OT_EXTENSION))]
     async fn receive_into(
         &mut self,
         choices: &[Choice],
@@ -371,8 +371,7 @@ fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
 mod tests {
 
     use rand::{rngs::StdRng, SeedableRng};
-    use seec_core::test_utils::init_tracing;
-    use seec_net::testing::local_conn;
+    use seec_net::testing::{init_tracing, local_conn};
 
     use crate::{
         extension::{OtExtensionReceiver, OtExtensionSender, DEFAULT_OT_BATCH_SIZE},

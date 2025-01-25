@@ -11,7 +11,7 @@ use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
-use crate::{RotReceiver, RotSender};
+use crate::{phase, RotReceiver, RotSender};
 
 pub struct SimplestOt {
     rng: StdRng,
@@ -49,7 +49,8 @@ impl RotSender for SimplestOt {
     type Error = Error;
 
     #[allow(non_snake_case)]
-    #[tracing::instrument(level = Level::DEBUG, skip(self))]
+    #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
     async fn send_into(&mut self, ots: &mut Vec<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
         let a = Scalar::random(&mut self.rng);
@@ -96,6 +97,7 @@ impl RotReceiver for SimplestOt {
 
     #[allow(non_snake_case)]
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
     async fn receive_into(
         &mut self,
         choices: &[Choice],
@@ -154,8 +156,7 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 mod tests {
     use anyhow::Result;
     use rand::{rngs::StdRng, SeedableRng};
-    use seec_core::test_utils::init_tracing;
-    use seec_net::testing::local_conn;
+    use seec_net::testing::{local_conn, init_tracing};
 
     use super::SimplestOt;
     use crate::{random_choices, RotReceiver, RotSender};

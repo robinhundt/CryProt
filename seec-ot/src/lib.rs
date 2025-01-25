@@ -6,6 +6,7 @@ use subtle::Choice;
 
 pub mod base;
 pub mod extension;
+pub mod phase;
 
 pub trait RotSender {
     type Error;
@@ -62,3 +63,4 @@ pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<
         .map(Choice::from)
         .collect()
 }
+

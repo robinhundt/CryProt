@@ -566,14 +566,16 @@ mod tests {
 
     use anyhow::{Context, Result};
     use futures::{SinkExt, StreamExt};
-    use seec_core::test_utils::init_tracing;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         task::JoinSet,
     };
     use tracing::debug;
 
-    use crate::{testing::local_conn, Id};
+    use crate::{
+        testing::{init_tracing, local_conn},
+        Id,
+    };
 
     #[tokio::test]
     async fn create_local_conn() -> Result<()> {
@@ -726,12 +728,8 @@ mod tests {
     async fn serde_request_response_stream() -> Result<()> {
         let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;
-        let (mut snd1, mut recv1) = s
-            .request_response_stream::<Vec<i32>, String>()
-            .await?;
-        let (mut snd2, mut recv2) = c
-            .request_response_stream::<String, Vec<i32>>()
-            .await?;
+        let (mut snd1, mut recv1) = s.request_response_stream::<Vec<i32>, String>().await?;
+        let (mut snd2, mut recv2) = c.request_response_stream::<String, Vec<i32>>().await?;
         snd1.send(vec![1, 2, 3]).await?;
         let ret = recv2.next().await.context("recv")??;
         assert_eq!(vec![1, 2, 3], ret);

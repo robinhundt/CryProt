@@ -1759,10 +1759,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "seec-vm"
-version = "0.1.0"
-
-[[package]]
 name = "semver"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"

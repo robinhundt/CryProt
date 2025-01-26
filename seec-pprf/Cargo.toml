@@ -1,7 +1,18 @@
 [package]
+edition = "2021"
 name = "seec-pprf"
 version = "0.1.0"
-edition = "2021"
 
 [dependencies]
-seec-core.workspace = true
+aes.workspace = true
+bytemuck.workspace = true
+futures.workspace = true
+ndarray.workspace = true
+rand.workspace = true
+seec-core = { workspace = true, features = ["num-traits", "tokio-rayon"] }
+seec-net.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+seec-net = { workspace = true, features = ["__testing"] }
+tokio = { workspace = true, features = ["full"] }

@@ -707,7 +707,7 @@ mod tests {
         let (mut snd, _) = s.stream().await?;
         let (_, mut recv) = c.stream().await?;
         snd.send(NonOwned { a: &[1, 2, 3] }).await?;
-        let ret= recv.next().await.context("recv")??;
+        let ret = recv.next().await.context("recv")??;
         assert_eq!(NonOwned { a: &[1, 2, 3] }, ret);
         todo!()
     }

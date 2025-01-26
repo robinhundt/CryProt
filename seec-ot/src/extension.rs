@@ -170,7 +170,8 @@ impl RotSender for OtExtensionSender {
                     // if !base_choice {
                     //   v_row ^= recv_row;
                     // }
-                    let choice_mask = Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
+                    let choice_mask =
+                        Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
                     // if choice_mask == 0, we zero out recv_row
                     // if choice_mask == 1, recv_row is not changed
                     and_inplace_elem(&mut recv_row, choice_mask);

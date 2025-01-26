@@ -87,8 +87,6 @@ impl AesHash {
 
 /// An `AesHash` with a fixed key.
 pub static FIXED_KEY_HASH: LazyLock<AesHash> = LazyLock::new(|| {
-    // TODO: Is it sufficient to just choose some random key? This one was generated
-    //  by just using `rand::thread_rng().gen()`
     let key = 193502124791825095790518994062991136444_u128
         .to_le_bytes()
         .into();

@@ -7,7 +7,7 @@ use aes::{
 use bytemuck::{cast_slice, cast_slice_mut};
 use futures::{SinkExt, StreamExt};
 use ndarray::Array2;
-use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
 use seec_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
@@ -47,8 +47,10 @@ pub struct TreeGrp {
 }
 
 impl RegularPprfSender {
-    pub fn new_with_conf(conn: Connection, conf: PprfConfig, base_ots: Array2<[Block; 2]>) -> Self {
+    pub fn new_with_conf(conn: Connection, conf: PprfConfig, base_ots: Vec<[Block; 2]>) -> Self {
         assert_eq!(conf.base_ot_count(), base_ots.len());
+        let base_ots = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], base_ots)
+            .expect("base_ots.len() is checked before");
         Self {
             conn,
             conf,
@@ -56,13 +58,12 @@ impl RegularPprfSender {
         }
     }
 
-    pub async fn expand(mut self, value: Block, seed: Block, out_fmt: OutFormat) -> Array2<Block> {
-        let (rows, cols) = out_fmt.out_dims(&self.conf);
-        let mut output = Array2::zeros([rows, cols]);
+    pub async fn expand(mut self, value: Block, seed: Block, out_fmt: OutFormat) -> Vec<Block> {
         let aes = create_fixed_aes();
         let depth = self.conf.depth();
         let pnt_count = self.conf.pnt_count();
         let domain = self.conf.domain();
+        let mut output = allocate_zeroed_vec(domain * pnt_count);
 
         let mut rng = AesRng::from_seed(seed);
         let dd = match out_fmt {
@@ -145,7 +146,8 @@ impl RegularPprfSender {
 
             snd.send(tree_grp).await.unwrap();
             if out_fmt != OutFormat::Interleaved {
-                todo!()
+                let last_lvl = get_level(&mut tree, depth);
+                copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
             }
         }
 
@@ -157,10 +159,15 @@ impl RegularPprfReceiver {
     pub fn new_with_conf(
         conn: Connection,
         conf: PprfConfig,
-        base_ots: Array2<Block>,
-        base_choices: Array2<u8>,
+        base_ots: Vec<Block>,
+        base_choices: Vec<u8>,
     ) -> Self {
         assert_eq!(conf.base_ot_count(), base_ots.len());
+        assert_eq!(conf.base_ot_count(), base_choices.len());
+        let base_ots = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], base_ots)
+            .expect("base_ots.len() is checked before");
+        let base_choices = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], base_choices)
+            .expect("base_ots.len() is checked before");
         Self {
             conn,
             conf,
@@ -169,7 +176,7 @@ impl RegularPprfReceiver {
         }
     }
 
-    pub async fn expand(mut self, out_fmt: OutFormat) -> Array2<Block> {
+    pub async fn expand(mut self, out_fmt: OutFormat) -> Vec<Block> {
         if out_fmt == OutFormat::Interleaved {
             assert_eq!(
                 0,
@@ -177,14 +184,12 @@ impl RegularPprfReceiver {
                   "for OutFormat::Interleaved, conf.pnt_count() needs to be multiple of PARALLEL_TREES"
                 );
         }
-        let (rows, cols) = out_fmt.out_dims(&self.conf);
-        // TODO not sure if can use Array2, since it is column major order
-        let mut output = Array2::zeros([rows, cols]);
         let aes = create_fixed_aes();
         let points = self.get_points(OutFormat::ByLeafIndex);
         let depth = self.conf.depth();
         let pnt_count = self.conf.pnt_count();
         let domain = self.conf.domain();
+        let mut output = allocate_zeroed_vec(domain * pnt_count);
 
         let dd = match out_fmt {
             OutFormat::Interleaved => depth,
@@ -280,7 +285,8 @@ impl RegularPprfReceiver {
                 *active_child = ots[1] ^ active_sum;
             }
             if out_fmt != OutFormat::Interleaved {
-                todo!()
+                let last_lvl = get_level(&mut tree, depth);
+                copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
             }
         }
         output
@@ -290,9 +296,8 @@ impl RegularPprfReceiver {
         match out_fmt {
             OutFormat::Interleaved => {
                 let mut points = self.get_points(OutFormat::ByLeafIndex);
-                let total_trees = points.len();
                 for (i, point) in points.iter_mut().enumerate() {
-                    *point = interleave_point(*point, i, total_trees, self.conf.domain(), out_fmt)
+                    *point = interleave_point(*point, i, self.conf.domain())
                 }
                 points
             }
@@ -300,55 +305,27 @@ impl RegularPprfReceiver {
                 .base_choices
                 .rows()
                 .into_iter()
-                .map(|choice_bits| get_active_path(choice_bits.iter().copied()))
+                .map(|choice_bits| {
+                    debug_assert_eq!(self.conf.depth(), choice_bits.len());
+                    let point = get_active_path(choice_bits.iter().copied());
+                    debug_assert!(point < self.conf.domain());
+                    point
+                })
                 .collect(),
-            _ => todo!()
+            _ => todo!(),
         }
     }
 
-    pub fn sample_choice_bits<R: RngCore + CryptoRng>(
-        conf: PprfConfig,
-        modulus: usize,
-        out_fmt: OutFormat,
-        rng: &mut R,
-    ) -> Array2<u8> {
-        let rows = conf.pnt_count().next_multiple_of(PARALLEL_TREES);
-        let cols = conf.depth();
-        let mut choices = Array2::zeros([rows, cols]);
-        for (i, mut choice_row) in choices.rows_mut().into_iter().enumerate() {
-            match out_fmt {
-                OutFormat::ByLeafIndex => {
-                    let mut idx;
-                    loop {
-                        choice_row
-                            .iter_mut()
-                            .for_each(|choice| *choice = rng.gen::<bool>() as u8);
-                        idx = get_active_path(choice_row.iter().copied());
-                        if idx < modulus {
-                            break;
-                        }
-                    }
-                }
-                OutFormat::Interleaved => {
-                    // make sure that atleast the first element of this tree
-                    // is within the modulus.
-                    let mut idx = interleave_point(0, i, conf.pnt_count, conf.domain, out_fmt);
-                    assert!(idx < modulus, "Iteration {i}, failed: {idx} < {modulus}");
-                    loop {
-                        choice_row
-                            .iter_mut()
-                            .for_each(|choice| *choice = rng.gen::<bool>() as u8);
-                        idx = get_active_path(choice_row.iter().copied());
-                        idx = interleave_point(idx, i, conf.pnt_count, conf.domain, out_fmt);
-                        if idx < modulus {
-                            break;
-                        }
-                    }
-                }
-                _ => todo!()
+    pub fn sample_choice_bits<R: RngCore + CryptoRng>(conf: PprfConfig, rng: &mut R) -> Vec<u8> {
+        let mut choices = vec![0_u8; conf.pnt_count() * conf.depth()];
+        let dist = Uniform::new(0, conf.domain());
+        for choice in choices.chunks_exact_mut(conf.depth()) {
+            let mut idx = dist.sample(rng);
+            for choice_bit in choice {
+                *choice_bit = (idx & 1) as u8;
+                idx = idx >> 1;
             }
         }
-
         choices
     }
 }
@@ -381,15 +358,13 @@ fn get_cons_levels(
 }
 
 fn get_level_output(
-    output: &mut Array2<Block>,
+    output: &mut [Block],
     tree_idx: usize,
     domain: usize,
 ) -> &mut [[Block; PARALLEL_TREES]] {
-    // TODO not sure if can use Array2, since it is column major order
-    let out = cast_slice_mut(output.as_slice_mut().unwrap());
+    let out = cast_slice_mut(output);
     let forest = tree_idx / PARALLEL_TREES;
-    assert_eq!(tree_idx % PARALLEL_TREES, 0);
-    // let size = 1 << (conf.depth);
+    debug_assert_eq!(tree_idx % PARALLEL_TREES, 0);
     let start = forest * domain;
     &mut out[start..start + domain]
 }
@@ -398,11 +373,9 @@ fn get_active_path<I>(choice_bits: I) -> usize
 where
     I: Iterator<Item = u8> + ExactSizeIterator,
 {
-    let len = choice_bits.len();
-    choice_bits.enumerate().fold(0, |point, (i, cb)| {
-        let shift = len - i - 1;
-        point | ((1 ^ cb as usize) << shift)
-    })
+    choice_bits
+        .enumerate()
+        .fold(0, |point, (i, cb)| point | ((cb as usize) << i))
 }
 
 fn get_inactive_active_child(
@@ -427,40 +400,37 @@ fn get_inactive_active_child(
     children.map(|arr| &mut arr[tree])
 }
 
-fn interleave_point(
-    point: usize,
+fn interleave_point(point: usize, tree_idx: usize, domain: usize) -> usize {
+    let sub_tree = tree_idx % PARALLEL_TREES;
+    let forest = tree_idx / PARALLEL_TREES;
+    (forest * domain + point) * PARALLEL_TREES + sub_tree
+}
+
+fn copy_out(
+    last_lvl: &[[Block; 9]],
+    output: &mut [Block],
     tree_idx: usize,
-    total_trees: usize,
-    domain: usize,
     out_fmt: OutFormat,
-) -> usize {
+    conf: PprfConfig,
+) {
+    let total_trees = conf.pnt_count();
+    let curr_size = PARALLEL_TREES.min(total_trees - tree_idx);
+    let last_lvl: &[Block] = cast_slice(last_lvl);
+    // assert_eq!(conf.domain(), last_lvl.len() / PARALLEL_TREES);
+    let domain = conf.domain();
     match out_fmt {
-        OutFormat::ByLeafIndex | OutFormat::ByTreeIndex => {
-            panic!("interleave_point called on OutFormat::Plain")
-        }
-        // OutFormat::InterleavedTransposed => {
-        //     let num_sets = total_trees / 8;
-
-        //     let set_idx = tree_idx / 8;
-        //     let sub_idx = tree_idx % 8;
-
-        //     let section_idx = point / 16;
-        //     let pos_idx = point % 16;
-
-        //     let set_offset = set_idx * 128;
-        //     let sub_offset = sub_idx + 8 * pos_idx;
-        //     let sec_offset = section_idx * num_sets * 128;
-
-        //     set_offset + sub_offset + sec_offset
-        // }
-        OutFormat::Interleaved => {
-            if domain <= point {
-                return usize::MAX;
+        OutFormat::ByLeafIndex => {
+            for leaf_idx in 0..domain {
+                let o_idx = total_trees * leaf_idx + tree_idx;
+                let i_idx = leaf_idx * PARALLEL_TREES;
+                // todo copy from slice
+                for j in 0..curr_size {
+                    output[o_idx + j] = last_lvl[i_idx + j];
+                }
             }
-            let sub_tree = tree_idx % PARALLEL_TREES;
-            let forest = tree_idx / PARALLEL_TREES;
-            (forest * domain + point) * PARALLEL_TREES + sub_tree
         }
+        OutFormat::ByTreeIndex => todo!(),
+        OutFormat::Interleaved => panic!("Do not copy_out for OutFormat::Interleaved"),
     }
 }
 
@@ -523,16 +493,6 @@ impl PprfConfig {
     }
 }
 
-impl OutFormat {
-    // returns (rows, cols)
-    fn out_dims(&self, conf: &PprfConfig) -> (usize, usize) {
-        match self {
-            OutFormat::Interleaved => (conf.pnt_count * conf.domain, 1),
-            OutFormat::ByLeafIndex | OutFormat::ByTreeIndex => todo!(),
-        }
-    }
-}
-
 fn log2_ceil(val: usize) -> usize {
     let log2 = val.ilog2();
     if val > (1 << log2) {
@@ -544,7 +504,6 @@ fn log2_ceil(val: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use ndarray::Array2;
     use rand::{rngs::StdRng, CryptoRng, Rng, RngCore, SeedableRng};
     use seec_core::{utils::xor_inplace, Block};
     use seec_net::testing::local_conn;
@@ -553,23 +512,54 @@ mod tests {
 
     pub fn fake_base<R: RngCore + CryptoRng>(
         conf: PprfConfig,
-        modulus: usize,
-        out_fmt: OutFormat,
         rng: &mut R,
-    ) -> (Array2<[Block; 2]>, Array2<Block>, Array2<u8>) {
+    ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
         let base_ot_count = conf.base_ot_count();
-        let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
-        let choices = RegularPprfReceiver::sample_choice_bits(conf, modulus, out_fmt, rng);
+        let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| Default::default()).collect();
+        let choices = RegularPprfReceiver::sample_choice_bits(conf, rng);
         let msg = msg2
             .iter()
             .zip(choices.iter())
             .map(|(m, c)| m[*c as usize])
             .collect();
 
-        let msg2 = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], msg2).unwrap();
-        let msg = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], msg).unwrap();
-
         (msg2, msg, choices)
+    }
+
+    #[tokio::test]
+    async fn test_pprf_by_leaf() {
+        let conf = PprfConfig::new(334, 5 * PARALLEL_TREES);
+        let out_fmt = OutFormat::ByLeafIndex;
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let (c1, c2) = local_conn().await.unwrap();
+        let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
+
+        let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
+        let receiver =
+            RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
+        let points = receiver.get_points(out_fmt);
+        eprintln!("{points:?}");
+        let seed = rng.gen();
+        let (mut s_out, r_out) = tokio::join!(
+            sender.expand(Block::ONES, seed, out_fmt),
+            receiver.expand(out_fmt)
+        );
+
+        xor_inplace(&mut s_out, &r_out);
+        let mut ones = 0;
+        for (i, &blk) in s_out.iter().enumerate() {
+            let f = points.contains(&i);
+            let exp = if f { Block::ONES } else { Block::ZERO };
+            if exp != blk {
+                eprintln!("{i} {exp:?} {blk:?}")
+            }
+            if blk == Block::ONES {
+                ones += 1;
+            }
+            // assert_eq!(exp, *blk, "block {i} not as expected");
+        }
+        eprintln!("{ones} one Blocks. expected {}", points.len());
     }
 
     #[tokio::test]
@@ -579,20 +569,20 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(42);
 
         let (c1, c2) = local_conn().await.unwrap();
-        let (sender_base_ots, receiver_base_ots, base_choices) =
-            fake_base(conf, conf.domain() * conf.pnt_count(), out_fmt, &mut rng);
+        let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
 
         let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
         let receiver =
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
         let points = receiver.get_points(out_fmt);
         let seed = rng.gen();
-        let (s_out, r_out) = tokio::join!(
+        let (mut s_out, r_out) = tokio::join!(
             sender.expand(Block::ONES, seed, out_fmt),
             receiver.expand(out_fmt)
         );
-        let out = s_out ^ r_out;
-        for (i, blk) in out.iter().enumerate() {
+
+        xor_inplace(&mut s_out, &r_out);
+        for (i, blk) in s_out.iter().enumerate() {
             let f = points.contains(&i);
             let exp = if f { Block::ONES } else { Block::ZERO };
             assert_eq!(exp, *blk, "block {i} not as expected");

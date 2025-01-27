@@ -43,7 +43,7 @@ pub const PARALLEL_TREES: usize = AES_PAR_BLOCKS;
 pub struct TreeGrp {
     g: usize,
     sums: [Vec<[Block; PARALLEL_TREES]>; 2],
-    last_ots: Vec<[Block; 4]>, // TOOD 4 correct???
+    last_ots: Vec<[Block; 4]>,
 }
 
 impl RegularPprfSender {
@@ -116,13 +116,14 @@ impl RegularPprfSender {
 
             let mut mask_sums = |idx: usize| {
                 for (d, sums) in tree_grp.sums[idx].iter_mut().take(depth - 1).enumerate() {
+                    //tood depth - 1?
                     for (j, sum) in sums.iter_mut().enumerate().take(min) {
                         *sum ^= self.base_ots[(g + j, depth - 1 - d)][idx];
                     }
                 }
             };
-            mask_sums(0);
-            mask_sums(1);
+            // mask_sums(0);
+            // mask_sums(1);
 
             let d = depth - 1;
             tree_grp.last_ots.resize(min, Default::default());
@@ -139,7 +140,8 @@ impl RegularPprfSender {
                     self.base_ots[(g + j, 0)][1] ^ Block::ONES,
                 ];
                 let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
-                xor_inplace(&mut tree_grp.last_ots[j], &masks);
+                dbg!(&tree_grp.last_ots[j]);
+                // xor_inplace(&mut tree_grp.last_ots[j], &masks);
             }
             tree_grp.sums[0].truncate(depth - 1);
             tree_grp.sums[1].truncate(depth - 1);
@@ -186,6 +188,7 @@ impl RegularPprfReceiver {
         }
         let aes = create_fixed_aes();
         let points = self.get_points(OutFormat::ByLeafIndex);
+        dbg!(&points);
         let depth = self.conf.depth();
         let pnt_count = self.conf.pnt_count();
         let domain = self.conf.domain();
@@ -206,8 +209,9 @@ impl RegularPprfReceiver {
             let lvl1 = get_level(&mut tree, 1);
             for i in 0..PARALLEL_TREES {
                 let active = self.base_choices[(i + g, depth - 1)] as usize;
-                lvl1[active ^ 1][i] =
-                    self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
+                // lvl1[active ^ 1][i] =
+                //     self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
+                lvl1[active ^ 1][i] = tree_grp.sums[active ^ 1][0][i];
                 lvl1[active][i] = Block::ZERO;
             }
 
@@ -247,11 +251,13 @@ impl RegularPprfReceiver {
                         let active_child_idx = leaf_idx >> (depth - 1 - d);
                         let inactive_child_idx = active_child_idx ^ 1;
                         let not_ai = inactive_child_idx & 1;
+                        dbg!(leaf_idx, active_child_idx, inactive_child_idx, not_ai);
                         let inactive_child = &mut lvl1[inactive_child_idx][i];
                         let correct_sum = *inactive_child ^ tree_grp.sums[not_ai][d][i];
-                        *inactive_child = correct_sum
-                            ^ my_sums[not_ai][i]
-                            ^ self.base_ots[(i + g, depth - 1 - d)];
+                        // *inactive_child = correct_sum
+                        //     ^ my_sums[not_ai][i]
+                        //     ^ self.base_ots[(i + g, depth - 1 - d)];
+                        *inactive_child = correct_sum ^ my_sums[not_ai][i];
                     }
                 }
             }
@@ -265,6 +271,7 @@ impl RegularPprfReceiver {
                 let active_child_idx = points[j + g];
                 let inactive_child_idx = active_child_idx ^ 1;
                 let not_ai = inactive_child_idx & 1;
+                dbg!(active_child_idx, inactive_child_idx, not_ai);
 
                 let mask_in = [
                     self.base_ots[(g + j, 0)],
@@ -272,8 +279,10 @@ impl RegularPprfReceiver {
                 ];
                 let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
 
-                let ots: [Block; 2] =
-                    array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
+                // let ots: [Block; 2] =
+                //     array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
+                let ots: [Block; 2] = array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i]);
+                dbg!(&ots);
 
                 let [inactive_child, active_child] =
                     get_inactive_active_child(j, lvl, inactive_child_idx, active_child_idx);
@@ -516,6 +525,9 @@ mod tests {
         rng: &mut R,
     ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
         let base_ot_count = conf.base_ot_count();
+        // let msg2: Vec<[Block; 2]> = (0..base_ot_count)
+        //     .map(|_| [Block::ZERO, Block::ONES])
+        //     .collect();
         let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
         let choices = RegularPprfReceiver::sample_choice_bits(conf, rng);
         let msg = msg2
@@ -560,6 +572,42 @@ mod tests {
                 };
                 assert_eq!(exp, s_out[idx]);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pprf_interleaved_simple() {
+        // Reduce size to minimum to debug
+        let conf = PprfConfig::new(4, PARALLEL_TREES);
+        let out_fmt = OutFormat::Interleaved;
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let (c1, c2) = local_conn().await.unwrap();
+        let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
+
+        // Print the base OTs to see correlation
+        // println!("Sender base OTs: {:?}", sender_base_ots);
+        // println!("Receiver base OTs: {:?}", receiver_base_ots);
+        println!("Base choices: {:?}", base_choices);
+
+        let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
+        let receiver =
+            RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
+        let points = receiver.get_points(out_fmt);
+        println!("Points: {:?}", points);
+
+        let seed = rng.gen();
+        let (mut s_out, r_out) = tokio::join!(
+            sender.expand(Block::ONES, seed, out_fmt),
+            receiver.expand(out_fmt)
+        );
+
+        xor_inplace(&mut s_out, &r_out);
+        println!("XORed output: {:?}", s_out);
+        for (i, blk) in s_out.iter().enumerate() {
+            let f = points.contains(&i);
+            let exp = if f { Block::ONES } else { Block::ZERO };
+            assert_eq!(exp, *blk, "block {i} not as expected");
         }
     }
 

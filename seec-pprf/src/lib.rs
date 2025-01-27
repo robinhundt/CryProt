@@ -116,14 +116,13 @@ impl RegularPprfSender {
 
             let mut mask_sums = |idx: usize| {
                 for (d, sums) in tree_grp.sums[idx].iter_mut().take(depth - 1).enumerate() {
-                    //tood depth - 1?
                     for (j, sum) in sums.iter_mut().enumerate().take(min) {
-                        *sum ^= self.base_ots[(g + j, depth - 1 - d)][idx];
+                        *sum ^= self.base_ots[(g + j, depth - 1 - d)][idx ^ 1];
                     }
                 }
             };
-            // mask_sums(0);
-            // mask_sums(1);
+            mask_sums(0);
+            mask_sums(1);
 
             let d = depth - 1;
             tree_grp.last_ots.resize(min, Default::default());
@@ -134,13 +133,12 @@ impl RegularPprfSender {
                 tree_grp.last_ots[j][3] = tree_grp.sums[0][d][j] ^ value;
 
                 let mask_in = [
-                    self.base_ots[(g + j, 0)][0],
-                    self.base_ots[(g + j, 0)][0] ^ Block::ONES,
                     self.base_ots[(g + j, 0)][1],
                     self.base_ots[(g + j, 0)][1] ^ Block::ONES,
+                    self.base_ots[(g + j, 0)][0],
+                    self.base_ots[(g + j, 0)][0] ^ Block::ONES,
                 ];
                 let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
-                dbg!(&tree_grp.last_ots[j]);
                 xor_inplace(&mut tree_grp.last_ots[j], &masks);
             }
             tree_grp.sums[0].truncate(depth - 1);
@@ -188,12 +186,10 @@ impl RegularPprfReceiver {
         }
         let aes = create_fixed_aes();
         let points = self.get_points(OutFormat::ByLeafIndex);
-        dbg!(&points);
         let depth = self.conf.depth();
         let pnt_count = self.conf.pnt_count();
         let domain = self.conf.domain();
         let mut output = allocate_zeroed_vec(domain * pnt_count);
-
         let dd = match out_fmt {
             OutFormat::Interleaved => depth,
             _ => depth + 1,
@@ -206,13 +202,15 @@ impl RegularPprfReceiver {
             let tree_grp: TreeGrp = rx.next().await.unwrap().unwrap();
             assert_eq!(g, tree_grp.g);
 
-            let lvl1 = get_level(&mut tree, 1);
-            for i in 0..PARALLEL_TREES {
-                let active = self.base_choices[(i + g, depth - 1)] as usize;
-                // lvl1[active ^ 1][i] =
-                //     self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
-                lvl1[active ^ 1][i] = tree_grp.sums[active ^ 1][0][i];
-                lvl1[active][i] = Block::ZERO;
+            if depth > 1 {
+                let lvl1 = get_level(&mut tree, 1);
+                for i in 0..PARALLEL_TREES {
+                    let active = self.base_choices[(i + g, depth - 1)] as usize;
+                    lvl1[active ^ 1][i] =
+                        self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
+                    lvl1[active ^ 1][i];
+                    lvl1[active][i] = Block::ZERO;
+                }
             }
 
             let mut my_sums = [[Block::ZERO; PARALLEL_TREES]; 2];
@@ -251,13 +249,11 @@ impl RegularPprfReceiver {
                         let active_child_idx = leaf_idx >> (depth - 1 - d);
                         let inactive_child_idx = active_child_idx ^ 1;
                         let not_ai = inactive_child_idx & 1;
-                        dbg!(leaf_idx, active_child_idx, inactive_child_idx, not_ai);
                         let inactive_child = &mut lvl1[inactive_child_idx][i];
                         let correct_sum = *inactive_child ^ tree_grp.sums[not_ai][d][i];
-                        // *inactive_child = correct_sum
-                        //     ^ my_sums[not_ai][i]
-                        //     ^ self.base_ots[(i + g, depth - 1 - d)];
-                        *inactive_child = correct_sum ^ my_sums[not_ai][i];
+                        *inactive_child = correct_sum
+                            ^ my_sums[not_ai][i]
+                            ^ self.base_ots[(i + g, depth - 1 - d)];
                     }
                 }
             }
@@ -271,7 +267,6 @@ impl RegularPprfReceiver {
                 let active_child_idx = points[j + g];
                 let inactive_child_idx = active_child_idx ^ 1;
                 let not_ai = inactive_child_idx & 1;
-                dbg!(active_child_idx, inactive_child_idx, not_ai);
 
                 let mask_in = [
                     self.base_ots[(g + j, 0)],
@@ -281,8 +276,6 @@ impl RegularPprfReceiver {
 
                 let ots: [Block; 2] =
                     array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
-                // let ots: [Block; 2] = array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i]);
-                dbg!(&ots);
 
                 let [inactive_child, active_child] =
                     get_inactive_active_child(j, lvl, inactive_child_idx, active_child_idx);
@@ -471,13 +464,17 @@ impl PprfConfig {
     /// Create a PprfConfig
     ///
     /// # Panics
-    /// If `pnt_count % `[`PARALLEL_TREES`]` != 0`
+    /// - if `domain < 2`
+    /// - if `domain % 2 != 0`
+    /// - if `pnt_count % `[`PARALLEL_TREES`]` != 0`
     pub fn new(domain: usize, pnt_count: usize) -> Self {
-        // assert_eq!(
-        //     0,
-        //     pnt_count % PARALLEL_TREES,
-        //     "pnt_count must be divisable by {PARALLEL_TREES}"
-        // );
+        assert!(domain >= 2, "domain must be at least 2");
+        assert_eq!(0, domain % 2, "domain must be even");
+        assert_eq!(
+            0,
+            pnt_count % PARALLEL_TREES,
+            "pnt_count must be divisable by {PARALLEL_TREES}"
+        );
         let depth = log2_ceil(domain) as usize;
         Self {
             pnt_count,
@@ -525,9 +522,6 @@ mod tests {
         rng: &mut R,
     ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
         let base_ot_count = conf.base_ot_count();
-        // let msg2: Vec<[Block; 2]> = (0..base_ot_count)
-        //     .map(|_| [Block::ZERO, Block::ONES])
-        //     .collect();
         let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
         let choices = RegularPprfReceiver::sample_choice_bits(conf, rng);
         let msg = msg2
@@ -535,7 +529,6 @@ mod tests {
             .zip(choices.iter())
             .map(|(m, c)| m[*c as usize])
             .collect();
-
         (msg2, msg, choices)
     }
 
@@ -578,7 +571,7 @@ mod tests {
     #[tokio::test]
     async fn test_pprf_interleaved_simple() {
         // Reduce size to minimum to debug
-        let conf = PprfConfig::new(4, PARALLEL_TREES);
+        let conf = PprfConfig::new(2, PARALLEL_TREES);
         let out_fmt = OutFormat::Interleaved;
         let mut rng = StdRng::seed_from_u64(42);
 

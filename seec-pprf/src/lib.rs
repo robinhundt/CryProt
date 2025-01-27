@@ -141,7 +141,7 @@ impl RegularPprfSender {
                 ];
                 let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
                 dbg!(&tree_grp.last_ots[j]);
-                // xor_inplace(&mut tree_grp.last_ots[j], &masks);
+                xor_inplace(&mut tree_grp.last_ots[j], &masks);
             }
             tree_grp.sums[0].truncate(depth - 1);
             tree_grp.sums[1].truncate(depth - 1);
@@ -279,9 +279,9 @@ impl RegularPprfReceiver {
                 ];
                 let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
 
-                // let ots: [Block; 2] =
-                //     array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
-                let ots: [Block; 2] = array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i]);
+                let ots: [Block; 2] =
+                    array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
+                // let ots: [Block; 2] = array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i]);
                 dbg!(&ots);
 
                 let [inactive_child, active_child] =

@@ -8,15 +8,15 @@ bench = false
 
 [features]
 __testing = ["dep:tracing", "dep:tracing-subscriber"]
-tokio-rayon = ["dep:rayon", "dep:tokio"]
+nightly = ["dep:libc"]
 num-traits = ["dep:num-traits"]
+tokio-rayon = ["dep:rayon", "dep:tokio"]
 
 [dependencies]
 aes.workspace = true
 blake3 = { version = "1.5.5", features = ["traits-preview"] }
 bytemuck = { workspace = true, features = ["derive"] }
 hybrid-array = { version = "0.2.3", features = ["bytemuck"] }
-libc = "0.2.169"
 num-traits = { workspace = true, optional = true }
 rand.workspace = true
 rand_core.workspace = true
@@ -27,6 +27,9 @@ tokio = { workspace = true, features = ["sync"], optional = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 wide = { version = "0.7.32", features = ["serde"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true

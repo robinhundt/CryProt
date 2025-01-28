@@ -12,7 +12,14 @@ rand.workspace = true
 seec-core = { workspace = true, features = ["num-traits", "tokio-rayon"] }
 seec-net.workspace = true
 serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+criterion.workspace = true
+seec-core = { workspace = true, features = ["__testing"] }
 seec-net = { workspace = true, features = ["__testing"] }
 tokio = { workspace = true, features = ["full"] }
+
+[[bench]]
+harness = false
+name = "bench"

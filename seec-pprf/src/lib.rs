@@ -7,15 +7,17 @@ use aes::{
 use bytemuck::{cast_slice, cast_slice_mut};
 use futures::{SinkExt, StreamExt};
 use ndarray::Array2;
-use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, RngCore, SeedableRng};
+use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
 use seec_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
+    tokio_rayon::spawn_compute,
     utils::{allocate_zeroed_vec, xor_inplace},
     Block, AES_PAR_BLOCKS,
 };
 use seec_net::Connection;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::unbounded_channel;
 
 pub struct RegularPprfSender {
     conn: Connection,
@@ -59,99 +61,108 @@ impl RegularPprfSender {
     }
 
     pub async fn expand(mut self, value: Block, seed: Block, out_fmt: OutFormat) -> Vec<Block> {
-        let aes = create_fixed_aes();
-        let depth = self.conf.depth();
-        let pnt_count = self.conf.pnt_count();
-        let domain = self.conf.domain();
-        let mut output = allocate_zeroed_vec(domain * pnt_count);
+        let (mut tx, _) = self.conn.stream().await.unwrap();
+        let (send, mut recv) = unbounded_channel();
 
-        let mut rng = AesRng::from_seed(seed);
-        let dd = match out_fmt {
-            OutFormat::Interleaved => depth,
-            _ => depth + 1,
-        };
+        let jh = spawn_compute(move || {
+            let aes = create_fixed_aes();
+            let depth = self.conf.depth();
+            let pnt_count = self.conf.pnt_count();
+            let domain = self.conf.domain();
 
-        let (mut snd, _) = self.conn.stream().await.unwrap();
-
-        let mut tree: Vec<[Block; PARALLEL_TREES]> = allocate_zeroed_vec(2_usize.pow(dd as u32));
-
-        for g in (0..pnt_count).step_by(PARALLEL_TREES) {
-            let mut tree_grp = TreeGrp {
-                g,
-                ..Default::default()
+            let mut rng = AesRng::from_seed(seed);
+            let dd = match out_fmt {
+                OutFormat::Interleaved => depth,
+                _ => depth + 1,
             };
-            let min = PARALLEL_TREES.min(pnt_count - g);
-            let level: &mut [u8] = cast_slice_mut(get_level(&mut tree, 0));
-            rng.fill_bytes(level);
-            tree_grp.sums[0].resize(depth, Default::default());
-            tree_grp.sums[1].resize(depth, Default::default());
 
-            for d in 0..depth {
-                let (lvl0, lvl1) = if out_fmt == OutFormat::Interleaved && d + 1 == depth {
-                    (
-                        get_level(&mut tree, d),
-                        get_level_output(&mut output, g, domain),
-                    )
-                } else {
-                    get_cons_levels(&mut tree, d)
+            let mut output = allocate_zeroed_vec(domain * pnt_count);
+            let mut tree: Vec<[Block; PARALLEL_TREES]> =
+                allocate_zeroed_vec(2_usize.pow(dd as u32));
+
+            for g in (0..pnt_count).step_by(PARALLEL_TREES) {
+                let mut tree_grp = TreeGrp {
+                    g,
+                    ..Default::default()
                 };
+                let min = PARALLEL_TREES.min(pnt_count - g);
+                let level: &mut [u8] = cast_slice_mut(get_level(&mut tree, 0));
+                rng.fill_bytes(level);
+                tree_grp.sums[0].resize(depth, Default::default());
+                tree_grp.sums[1].resize(depth, Default::default());
 
-                let width = lvl1.len();
-                let mut child_idx = 0;
-                while child_idx < width {
-                    let parent_idx = child_idx >> 1;
-                    let parent = &lvl0[parent_idx];
-                    for keep in 0..2 {
-                        let child = &mut lvl1[child_idx];
-                        let sum = &mut tree_grp.sums[keep][d];
-                        aes[keep]
-                            .encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
-                            .expect("parent and child have same len");
-                        xor_inplace(child, parent);
-                        xor_inplace(sum, child);
-                        child_idx += 1;
+                for d in 0..depth {
+                    let (lvl0, lvl1) = if out_fmt == OutFormat::Interleaved && d + 1 == depth {
+                        (
+                            get_level(&mut tree, d),
+                            get_level_output(&mut output, g, domain),
+                        )
+                    } else {
+                        get_cons_levels(&mut tree, d)
+                    };
+
+                    let width = lvl1.len();
+                    let mut child_idx = 0;
+                    while child_idx < width {
+                        let parent_idx = child_idx >> 1;
+                        let parent = &lvl0[parent_idx];
+                        for keep in 0..2 {
+                            let child = &mut lvl1[child_idx];
+                            let sum = &mut tree_grp.sums[keep][d];
+                            aes[keep]
+                                .encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
+                                .expect("parent and child have same len");
+                            xor_inplace(child, parent);
+                            xor_inplace(sum, child);
+                            child_idx += 1;
+                        }
                     }
                 }
-            }
 
-            let mut mask_sums = |idx: usize| {
-                for (d, sums) in tree_grp.sums[idx].iter_mut().take(depth - 1).enumerate() {
-                    for (j, sum) in sums.iter_mut().enumerate().take(min) {
-                        *sum ^= self.base_ots[(g + j, depth - 1 - d)][idx ^ 1];
+                let mut mask_sums = |idx: usize| {
+                    for (d, sums) in tree_grp.sums[idx].iter_mut().take(depth - 1).enumerate() {
+                        for (j, sum) in sums.iter_mut().enumerate().take(min) {
+                            *sum ^= self.base_ots[(g + j, depth - 1 - d)][idx ^ 1];
+                        }
                     }
+                };
+                mask_sums(0);
+                mask_sums(1);
+
+                let d = depth - 1;
+                tree_grp.last_ots.resize(min, Default::default());
+                for j in 0..min {
+                    tree_grp.last_ots[j][0] = tree_grp.sums[0][d][j];
+                    tree_grp.last_ots[j][1] = tree_grp.sums[1][d][j] ^ value;
+                    tree_grp.last_ots[j][2] = tree_grp.sums[1][d][j];
+                    tree_grp.last_ots[j][3] = tree_grp.sums[0][d][j] ^ value;
+
+                    let mask_in = [
+                        self.base_ots[(g + j, 0)][1],
+                        self.base_ots[(g + j, 0)][1] ^ Block::ONES,
+                        self.base_ots[(g + j, 0)][0],
+                        self.base_ots[(g + j, 0)][0] ^ Block::ONES,
+                    ];
+                    let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
+                    xor_inplace(&mut tree_grp.last_ots[j], &masks);
                 }
-            };
-            mask_sums(0);
-            mask_sums(1);
+                tree_grp.sums[0].truncate(depth - 1);
+                tree_grp.sums[1].truncate(depth - 1);
 
-            let d = depth - 1;
-            tree_grp.last_ots.resize(min, Default::default());
-            for j in 0..min {
-                tree_grp.last_ots[j][0] = tree_grp.sums[0][d][j];
-                tree_grp.last_ots[j][1] = tree_grp.sums[1][d][j] ^ value;
-                tree_grp.last_ots[j][2] = tree_grp.sums[1][d][j];
-                tree_grp.last_ots[j][3] = tree_grp.sums[0][d][j] ^ value;
-
-                let mask_in = [
-                    self.base_ots[(g + j, 0)][1],
-                    self.base_ots[(g + j, 0)][1] ^ Block::ONES,
-                    self.base_ots[(g + j, 0)][0],
-                    self.base_ots[(g + j, 0)][0] ^ Block::ONES,
-                ];
-                let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
-                xor_inplace(&mut tree_grp.last_ots[j], &masks);
+                send.send(tree_grp).unwrap();
+                if out_fmt != OutFormat::Interleaved {
+                    let last_lvl = get_level(&mut tree, depth);
+                    copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
+                }
             }
-            tree_grp.sums[0].truncate(depth - 1);
-            tree_grp.sums[1].truncate(depth - 1);
+            output
+        });
 
-            snd.send(tree_grp).await.unwrap();
-            if out_fmt != OutFormat::Interleaved {
-                let last_lvl = get_level(&mut tree, depth);
-                copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
-            }
+        while let Some(tree_group) = recv.recv().await {
+            tx.send(tree_group).await.unwrap();
         }
 
-        output
+        jh.await
     }
 }
 
@@ -177,122 +188,127 @@ impl RegularPprfReceiver {
     }
 
     pub async fn expand(mut self, out_fmt: OutFormat) -> Vec<Block> {
-        if out_fmt == OutFormat::Interleaved {
-            assert_eq!(
-                0,
-                 self.conf.pnt_count() % PARALLEL_TREES,
-                  "for OutFormat::Interleaved, conf.pnt_count() needs to be multiple of PARALLEL_TREES"
-                );
-        }
-        let aes = create_fixed_aes();
-        let points = self.get_points(OutFormat::ByLeafIndex);
-        let depth = self.conf.depth();
-        let pnt_count = self.conf.pnt_count();
-        let domain = self.conf.domain();
-        let mut output = allocate_zeroed_vec(domain * pnt_count);
-        let dd = match out_fmt {
-            OutFormat::Interleaved => depth,
-            _ => depth + 1,
-        };
-
         let (_, mut rx) = self.conn.stream().await.unwrap();
+        let (send, recv) = std::sync::mpsc::channel();
 
-        let mut tree: Vec<[Block; PARALLEL_TREES]> = allocate_zeroed_vec(2_usize.pow(dd as u32));
-        for g in (0..pnt_count).step_by(PARALLEL_TREES) {
-            let tree_grp: TreeGrp = rx.next().await.unwrap().unwrap();
-            assert_eq!(g, tree_grp.g);
+        let jh = spawn_compute(move || {
+            let aes = create_fixed_aes();
+            let points = self.get_points(OutFormat::ByLeafIndex);
+            let depth = self.conf.depth();
+            let pnt_count = self.conf.pnt_count();
+            let domain = self.conf.domain();
+            let mut output = allocate_zeroed_vec(domain * pnt_count);
+            let dd = match out_fmt {
+                OutFormat::Interleaved => depth,
+                _ => depth + 1,
+            };
+            let mut tree: Vec<[Block; PARALLEL_TREES]> =
+                allocate_zeroed_vec(2_usize.pow(dd as u32));
 
-            if depth > 1 {
-                let lvl1 = get_level(&mut tree, 1);
-                for i in 0..PARALLEL_TREES {
-                    let active = self.base_choices[(i + g, depth - 1)] as usize;
-                    lvl1[active ^ 1][i] =
-                        self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
-                    lvl1[active ^ 1][i];
-                    lvl1[active][i] = Block::ZERO;
+            for g in (0..pnt_count).step_by(PARALLEL_TREES) {
+                let tree_grp: TreeGrp = recv.recv().unwrap();
+                assert_eq!(g, tree_grp.g);
+
+                if depth > 1 {
+                    let lvl1 = get_level(&mut tree, 1);
+                    for i in 0..PARALLEL_TREES {
+                        let active = self.base_choices[(i + g, depth - 1)] as usize;
+                        lvl1[active ^ 1][i] =
+                            self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
+                        lvl1[active ^ 1][i];
+                        lvl1[active][i] = Block::ZERO;
+                    }
                 }
-            }
 
-            let mut my_sums = [[Block::ZERO; PARALLEL_TREES]; 2];
+                let mut my_sums = [[Block::ZERO; PARALLEL_TREES]; 2];
 
-            for d in 1..depth {
-                let (lvl0, lvl1) = if out_fmt == OutFormat::Interleaved && d + 1 == depth {
-                    (
-                        get_level(&mut tree, d),
-                        get_level_output(&mut output, g, domain),
-                    )
+                for d in 1..depth {
+                    let (lvl0, lvl1) = if out_fmt == OutFormat::Interleaved && d + 1 == depth {
+                        (
+                            get_level(&mut tree, d),
+                            get_level_output(&mut output, g, domain),
+                        )
+                    } else {
+                        get_cons_levels(&mut tree, d)
+                    };
+
+                    my_sums = [[Block::ZERO; PARALLEL_TREES]; 2];
+
+                    let width = lvl1.len();
+                    let mut child_idx = 0;
+                    while child_idx < width {
+                        let parent_idx = child_idx >> 1;
+                        let parent = &lvl0[parent_idx];
+                        for keep in 0..2 {
+                            let child = &mut lvl1[child_idx];
+                            let sum = &mut my_sums[keep];
+                            aes[keep]
+                                .encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
+                                .expect("parent and child have same len");
+                            xor_inplace(child, parent);
+                            xor_inplace(sum, child);
+                            child_idx += 1;
+                        }
+                    }
+
+                    if d != depth - 1 {
+                        for i in 0..PARALLEL_TREES {
+                            let leaf_idx = points[i + g];
+                            let active_child_idx = leaf_idx >> (depth - 1 - d);
+                            let inactive_child_idx = active_child_idx ^ 1;
+                            let not_ai = inactive_child_idx & 1;
+                            let inactive_child = &mut lvl1[inactive_child_idx][i];
+                            let correct_sum = *inactive_child ^ tree_grp.sums[not_ai][d][i];
+                            *inactive_child = correct_sum
+                                ^ my_sums[not_ai][i]
+                                ^ self.base_ots[(i + g, depth - 1 - d)];
+                        }
+                    }
+                }
+                let lvl = if out_fmt == OutFormat::Interleaved {
+                    get_level_output(&mut output, g, domain)
                 } else {
-                    get_cons_levels(&mut tree, d)
+                    get_level(&mut tree, depth)
                 };
 
-                my_sums = [[Block::ZERO; PARALLEL_TREES]; 2];
-                let width = lvl1.len();
-                let mut child_idx = 0;
-                while child_idx < width {
-                    let parent_idx = child_idx >> 1;
-                    let parent = &lvl0[parent_idx];
-                    for keep in 0..2 {
-                        let child = &mut lvl1[child_idx];
-                        let sum = &mut my_sums[keep];
-                        aes[keep]
-                            .encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
-                            .expect("parent and child have same len");
-                        xor_inplace(child, parent);
-                        xor_inplace(sum, child);
-                        child_idx += 1;
-                    }
-                }
+                for j in 0..PARALLEL_TREES {
+                    let active_child_idx = points[j + g];
+                    let inactive_child_idx = active_child_idx ^ 1;
+                    let not_ai = inactive_child_idx & 1;
 
-                if d != depth - 1 {
-                    for i in 0..PARALLEL_TREES {
-                        let leaf_idx = points[i + g];
-                        let active_child_idx = leaf_idx >> (depth - 1 - d);
-                        let inactive_child_idx = active_child_idx ^ 1;
-                        let not_ai = inactive_child_idx & 1;
-                        let inactive_child = &mut lvl1[inactive_child_idx][i];
-                        let correct_sum = *inactive_child ^ tree_grp.sums[not_ai][d][i];
-                        *inactive_child = correct_sum
-                            ^ my_sums[not_ai][i]
-                            ^ self.base_ots[(i + g, depth - 1 - d)];
-                    }
+                    let mask_in = [
+                        self.base_ots[(g + j, 0)],
+                        self.base_ots[(g + j, 0)] ^ Block::ONES,
+                    ];
+                    let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
+
+                    let ots: [Block; 2] =
+                        array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
+
+                    let [inactive_child, active_child] =
+                        get_inactive_active_child(j, lvl, inactive_child_idx, active_child_idx);
+
+                    // Fix the sums we computed previously to not include the
+                    // incorrect child values.
+                    let inactive_sum = my_sums[not_ai][j] ^ *inactive_child;
+                    let active_sum = my_sums[not_ai ^ 1][j] ^ *active_child;
+                    *inactive_child = ots[0] ^ inactive_sum;
+                    *active_child = ots[1] ^ active_sum;
+                }
+                if out_fmt != OutFormat::Interleaved {
+                    let last_lvl = get_level(&mut tree, depth);
+                    copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
                 }
             }
-            let lvl = if out_fmt == OutFormat::Interleaved {
-                get_level_output(&mut output, g, domain)
-            } else {
-                get_level(&mut tree, depth)
-            };
+            output
+        });
 
-            for j in 0..PARALLEL_TREES {
-                let active_child_idx = points[j + g];
-                let inactive_child_idx = active_child_idx ^ 1;
-                let not_ai = inactive_child_idx & 1;
-
-                let mask_in = [
-                    self.base_ots[(g + j, 0)],
-                    self.base_ots[(g + j, 0)] ^ Block::ONES,
-                ];
-                let masks = FIXED_KEY_HASH.cr_hash_blocks(&mask_in);
-
-                let ots: [Block; 2] =
-                    array::from_fn(|i| tree_grp.last_ots[j][2 * not_ai + i] ^ masks[i]);
-
-                let [inactive_child, active_child] =
-                    get_inactive_active_child(j, lvl, inactive_child_idx, active_child_idx);
-
-                // Fix the sums we computed previously to not include the
-                // incorrect child values.
-                let inactive_sum = my_sums[not_ai][j] ^ *inactive_child;
-                let active_sum = my_sums[not_ai ^ 1][j] ^ *active_child;
-                *inactive_child = ots[0] ^ inactive_sum;
-                *active_child = ots[1] ^ active_sum;
-            }
-            if out_fmt != OutFormat::Interleaved {
-                let last_lvl = get_level(&mut tree, depth);
-                copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
-            }
+        while let Some(tree_grp) = rx.next().await {
+            let tree_grp = tree_grp.unwrap();
+            send.send(tree_grp).unwrap();
         }
-        output
+
+        jh.await
     }
 
     pub fn get_points(&self, out_fmt: OutFormat) -> Vec<usize> {
@@ -509,28 +525,32 @@ fn log2_ceil(val: usize) -> usize {
     }
 }
 
+/// Intended for testing. Generated suitable OTs and choice bits for a pprf
+/// evaluation.
+pub fn fake_base<R: RngCore + CryptoRng>(
+    conf: PprfConfig,
+    rng: &mut R,
+) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
+    let base_ot_count = conf.base_ot_count();
+    let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
+    let choices = RegularPprfReceiver::sample_choice_bits(conf, rng);
+    let msg = msg2
+        .iter()
+        .zip(choices.iter())
+        .map(|(m, c)| m[*c as usize])
+        .collect();
+    (msg2, msg, choices)
+}
+
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::StdRng, CryptoRng, Rng, RngCore, SeedableRng};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
     use seec_core::{utils::xor_inplace, Block};
     use seec_net::testing::local_conn;
 
-    use crate::{OutFormat, PprfConfig, RegularPprfReceiver, RegularPprfSender, PARALLEL_TREES};
-
-    pub fn fake_base<R: RngCore + CryptoRng>(
-        conf: PprfConfig,
-        rng: &mut R,
-    ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
-        let base_ot_count = conf.base_ot_count();
-        let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
-        let choices = RegularPprfReceiver::sample_choice_bits(conf, rng);
-        let msg = msg2
-            .iter()
-            .zip(choices.iter())
-            .map(|(m, c)| m[*c as usize])
-            .collect();
-        (msg2, msg, choices)
-    }
+    use crate::{
+        fake_base, OutFormat, PprfConfig, RegularPprfReceiver, RegularPprfSender, PARALLEL_TREES,
+    };
 
     #[tokio::test]
     async fn test_pprf_by_leaf() {

@@ -10,6 +10,7 @@ bytemuck = "1.21.0"
 criterion = { version = "0.4", features = ["async_tokio", "html_reports"] }
 futures = "0.3.30"
 ndarray = "0.16.1"
+num-traits = "0.2.19"
 rand = "0.8.5"
 rand_core = "0.6.4"
 seec-core = { path = "seec-core" }
@@ -20,7 +21,6 @@ thiserror = "2.0.9"
 tokio = "1.37.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-num-traits = "0.2.19"
 
 
 [profile.profiling]

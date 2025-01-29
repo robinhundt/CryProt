@@ -697,22 +697,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serde_stream_non_owned() -> Result<()> {
-        #[derive(PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-        struct NonOwned<'a> {
-            a: &'a [u8],
-        }
-        let _g = init_tracing();
-        let (mut s, mut c) = local_conn().await?;
-        let (mut snd, _) = s.stream().await?;
-        let (_, mut recv) = c.stream().await?;
-        snd.send(NonOwned { a: &[1, 2, 3] }).await?;
-        let ret = recv.next().await.context("recv")??;
-        assert_eq!(NonOwned { a: &[1, 2, 3] }, ret);
-        todo!()
-    }
-
-    #[tokio::test]
     async fn serde_byte_stream_as_stream() -> Result<()> {
         let _g = init_tracing();
         let (mut s, mut c) = local_conn().await?;

@@ -11,8 +11,8 @@ use bytemuck::checked::cast_slice_mut;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use seec_core::{
+    alloc::{allocate_zeroed_vec, HugePageMemory},
     test_utils::init_bench_tracing,
-    alloc::allocate_zeroed_vec,
     Block,
 };
 use seec_net::testing::local_conn;
@@ -51,34 +51,19 @@ fn criterion_benchmark(c: &mut Criterion) {
                     receiver_base_ots,
                     base_choices,
                 );
-                // let mut out1 =
-                // allocate_zeroed_with_huge_pages::<Block>(conf.size());//vec![Block::ZERO;
-                // conf.size()]; let mut out2 =
-                // allocate_zeroed_with_huge_pages::<Block>(conf.size());//vec![Block::ZERO;
-                // conf.size()]; for b in cast_slice_mut::<_, u8>(&mut
-                // out1).iter_mut().step_by(4096) {     *b = 0;
-                // };
-                // for b in cast_slice_mut::<_, u8>(&mut out2).iter_mut().step_by(4096) {
-                //     *b = 0;
-                // };
-
+                // let out1 = HugePageMemory::zeroed(conf.size());
+                // let out2 = HugePageMemory::zeroed(conf.size());
                 let seed = rng.gen();
-                (sender, receiver, seed)
+                (sender, receiver, seed, out1, out2)
             },
-            |(sender, receiver, seed)| async move {
+            |(sender, receiver, seed, mut out1, mut out2)| async move {
                 let t1 = tokio::spawn(async move {
                     sender
-                        .expand(
-                            Block::ONES,
-                            seed,
-                            OutFormat::Interleaved,
-                        )
+                        .expand(Block::ONES, seed, OutFormat::Interleaved, &mut out1)
                         .await
                 });
                 let t2 = tokio::spawn(async move {
-                    receiver
-                        .expand(OutFormat::Interleaved)
-                        .await
+                    receiver.expand(OutFormat::Interleaved, &mut out2).await
                 });
                 tokio::try_join!(t1, t2).unwrap();
             },
@@ -97,7 +82,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     ))
     .bench_function("enc speed", |b| {
         b.iter(|| {
-            let mut enc_bytes = 0;
             for _ in (0..conf.pnt_count()).step_by(PARALLEL_TREES) {
                 for d in 0..depth - 1 {
                     let (lvl0, lvl1) = get_cons_levels(&mut buf, d);
@@ -108,11 +92,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                             bytemuck::cast_slice_mut(&mut lvl1[idx]),
                         )
                         .unwrap();
-                        enc_bytes += 16 * 9;
                     }
                 }
             }
-            dbg!(enc_bytes);
         });
     });
 }

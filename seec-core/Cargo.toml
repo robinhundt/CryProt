@@ -8,7 +8,6 @@ bench = false
 
 [features]
 __testing = ["dep:tracing", "dep:tracing-subscriber"]
-nightly = ["dep:libc"]
 num-traits = ["dep:num-traits"]
 tokio-rayon = ["dep:rayon", "dep:tokio"]
 
@@ -29,7 +28,7 @@ tracing-subscriber = { workspace = true, optional = true }
 wide = { version = "0.7.32", features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
-libc = { workspace = true, optional = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 criterion.workspace = true

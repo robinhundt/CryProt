@@ -1,4 +1,4 @@
-use std::{array, cmp::Ordering};
+use std::{array, cmp::Ordering, mem};
 
 use aes::{
     cipher::{BlockCipherEncrypt, KeyInit},
@@ -11,7 +11,7 @@ use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCor
 use seec_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
-    alloc::{allocate_zeroed_vec, HugeVec},
+    alloc::{allocate_zeroed_vec, HugePageMemory},
     tokio_rayon::spawn_compute,
     utils::xor_inplace,
     Block, AES_PAR_BLOCKS,
@@ -61,9 +61,15 @@ impl RegularPprfSender {
         }
     }
 
-    pub async fn expand(mut self, value: Block, seed: Block, out_fmt: OutFormat) -> HugeVec<Block> {
-        // assert_eq!(self.conf.domain() * self.conf.pnt_count(), out.len());
-        let mut output = HugeVec::zeroed(self.conf.size());
+    pub async fn expand(
+        mut self,
+        value: Block,
+        seed: Block,
+        out_fmt: OutFormat,
+        out: &mut HugePageMemory<Block>,
+    ) {
+        assert_eq!(self.conf.size(), out.len());
+        let mut output = mem::take(out);
         let (mut tx, _) = self.conn.stream().await.unwrap();
         let (send, mut recv) = unbounded_channel();
         let jh = spawn_compute(move || {
@@ -163,7 +169,7 @@ impl RegularPprfSender {
             tx.send(tree_group).await.unwrap();
         }
 
-        jh.await
+        *out = jh.await;
     }
 }
 
@@ -188,9 +194,9 @@ impl RegularPprfReceiver {
         }
     }
 
-    pub async fn expand(mut self, out_fmt: OutFormat) -> HugeVec<Block> {
-        // assert_eq!(self.conf.domain() * self.conf.pnt_count(), out.len());
-        let mut output = HugeVec::zeroed(self.conf.size());
+    pub async fn expand(mut self, out_fmt: OutFormat, out: &mut HugePageMemory<Block>) {
+        assert_eq!(self.conf.size(), out.len());
+        let mut output = mem::take(out);
         let (_, mut rx) = self.conn.stream().await.unwrap();
         let (send, recv) = std::sync::mpsc::channel();
         let jh = spawn_compute(move || {
@@ -309,7 +315,7 @@ impl RegularPprfReceiver {
             send.send(tree_grp).unwrap();
         }
 
-        jh.await
+        *out = jh.await;
     }
 
     pub fn get_points(&self, out_fmt: OutFormat) -> Vec<usize> {
@@ -547,123 +553,117 @@ pub fn fake_base<R: RngCore + CryptoRng>(
     (msg2, msg, choices)
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use rand::{rngs::StdRng, Rng, SeedableRng};
-//     use seec_core::{
-//         utils::{allocate_zeroed_vec, xor_inplace},
-//         Block,
-//     };
-//     use seec_net::testing::local_conn;
+#[cfg(test)]
+mod tests {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use seec_core::{alloc::HugePageMemory, utils::xor_inplace, Block};
+    use seec_net::testing::local_conn;
 
-//     use crate::{
-//         fake_base, OutFormat, PprfConfig, RegularPprfReceiver,
-// RegularPprfSender, PARALLEL_TREES,     };
+    use crate::{
+        fake_base, OutFormat, PprfConfig, RegularPprfReceiver, RegularPprfSender, PARALLEL_TREES,
+    };
 
-//     #[tokio::test]
-//     async fn test_pprf_by_leaf() {
-//         let conf = PprfConfig::new(334, 5 * PARALLEL_TREES);
-//         let out_fmt = OutFormat::ByLeafIndex;
-//         let mut rng = StdRng::seed_from_u64(42);
+    #[tokio::test]
+    async fn test_pprf_by_leaf() {
+        let conf = PprfConfig::new(334, 5 * PARALLEL_TREES);
+        let out_fmt = OutFormat::ByLeafIndex;
+        let mut rng = StdRng::seed_from_u64(42);
 
-//         let (c1, c2) = local_conn().await.unwrap();
-//         let (sender_base_ots, receiver_base_ots, base_choices) =
-// fake_base(conf, &mut rng);
+        let (c1, c2) = local_conn().await.unwrap();
+        let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
 
-//         let sender = RegularPprfSender::new_with_conf(c1, conf,
-// sender_base_ots);         let receiver =
-//             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots,
-// base_choices);         let points = receiver.get_points(out_fmt);
-//         eprintln!("{points:?}");
-//         let mut s_out = allocate_zeroed_vec(conf.size());
-//         let mut r_out = allocate_zeroed_vec(conf.size());
-//         let seed = rng.gen();
-//         tokio::join!(
-//             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
-//             receiver.expand(out_fmt, &mut r_out)
-//         );
+        let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
+        let receiver =
+            RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
+        let points = receiver.get_points(out_fmt);
+        eprintln!("{points:?}");
+        let mut s_out = HugePageMemory::zeroed(conf.size());
+        let mut r_out = HugePageMemory::zeroed(conf.size());
+        let seed = rng.gen();
+        tokio::join!(
+            sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
+            receiver.expand(out_fmt, &mut r_out)
+        );
 
-//         xor_inplace(&mut s_out, &r_out);
+        xor_inplace(&mut s_out, &r_out);
 
-//         for j in 0..points.len() {
-//             for i in 0..conf.domain() {
-//                 let idx = i * points.len() + j;
+        for j in 0..points.len() {
+            for i in 0..conf.domain() {
+                let idx = i * points.len() + j;
 
-//                 let exp = if points[j] == i {
-//                     Block::ONES
-//                 } else {
-//                     Block::ZERO
-//                 };
-//                 assert_eq!(exp, s_out[idx]);
-//             }
-//         }
-//     }
+                let exp = if points[j] == i {
+                    Block::ONES
+                } else {
+                    Block::ZERO
+                };
+                assert_eq!(exp, s_out[idx]);
+            }
+        }
+    }
 
-//     #[tokio::test]
-//     async fn test_pprf_interleaved_simple() {
-//         // Reduce size to minimum to debug
-//         let conf = PprfConfig::new(2, PARALLEL_TREES);
-//         let out_fmt = OutFormat::Interleaved;
-//         let mut rng = StdRng::seed_from_u64(42);
+    #[tokio::test]
+    async fn test_pprf_interleaved_simple() {
+        // Reduce size to minimum to debug
+        let conf = PprfConfig::new(2, PARALLEL_TREES);
+        let out_fmt = OutFormat::Interleaved;
+        let mut rng = StdRng::seed_from_u64(42);
 
-//         let (c1, c2) = local_conn().await.unwrap();
-//         let (sender_base_ots, receiver_base_ots, base_choices) =
-// fake_base(conf, &mut rng);
+        let (c1, c2) = local_conn().await.unwrap();
+        let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
 
-//         // Print the base OTs to see correlation
-//         // println!("Sender base OTs: {:?}", sender_base_ots);
-//         // println!("Receiver base OTs: {:?}", receiver_base_ots);
-//         println!("Base choices: {:?}", base_choices);
+        // Print the base OTs to see correlation
+        // println!("Sender base OTs: {:?}", sender_base_ots);
+        // println!("Receiver base OTs: {:?}", receiver_base_ots);
+        println!("Base choices: {:?}", base_choices);
 
-//         let sender = RegularPprfSender::new_with_conf(c1, conf,
-// sender_base_ots);         let receiver =
-//             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots,
-// base_choices);         let points = receiver.get_points(out_fmt);
-//         println!("Points: {:?}", points);
-//         let mut s_out = allocate_zeroed_vec(conf.size());
-//         let mut r_out = allocate_zeroed_vec(conf.size());
-//         let seed = rng.gen();
-//         tokio::join!(
-//             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
-//             receiver.expand(out_fmt, &mut r_out)
-//         );
+        let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
+        let receiver =
+            RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
+        let points = receiver.get_points(out_fmt);
+        println!("Points: {:?}", points);
+        let mut s_out = HugePageMemory::zeroed(conf.size());
+        let mut r_out = HugePageMemory::zeroed(conf.size());
+        let seed = rng.gen();
+        tokio::join!(
+            sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
+            receiver.expand(out_fmt, &mut r_out)
+        );
 
-//         xor_inplace(&mut s_out, &r_out);
-//         println!("XORed output: {:?}", s_out);
-//         for (i, blk) in s_out.iter().enumerate() {
-//             let f = points.contains(&i);
-//             let exp = if f { Block::ONES } else { Block::ZERO };
-//             assert_eq!(exp, *blk, "block {i} not as expected");
-//         }
-//     }
+        xor_inplace(&mut s_out, &r_out);
+        println!("XORed output: {:?}", s_out);
+        for (i, blk) in s_out.iter().enumerate() {
+            let f = points.contains(&i);
+            let exp = if f { Block::ONES } else { Block::ZERO };
+            assert_eq!(exp, *blk, "block {i} not as expected");
+        }
+    }
 
-//     #[tokio::test]
-//     async fn test_pprf_interleaved() {
-//         let conf = PprfConfig::new(334, 5 * PARALLEL_TREES);
-//         let out_fmt = OutFormat::Interleaved;
-//         let mut rng = StdRng::seed_from_u64(42);
+    #[tokio::test]
+    async fn test_pprf_interleaved() {
+        let conf = PprfConfig::new(334, 5 * PARALLEL_TREES);
+        let out_fmt = OutFormat::Interleaved;
+        let mut rng = StdRng::seed_from_u64(42);
 
-//         let (c1, c2) = local_conn().await.unwrap();
-//         let (sender_base_ots, receiver_base_ots, base_choices) =
-// fake_base(conf, &mut rng);
+        let (c1, c2) = local_conn().await.unwrap();
+        let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
 
-//         let sender = RegularPprfSender::new_with_conf(c1, conf,
-// sender_base_ots);         let receiver =
-//             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots,
-// base_choices);         let points = receiver.get_points(out_fmt);
-//         let mut s_out = allocate_zeroed_vec(conf.size());
-//         let mut r_out = allocate_zeroed_vec(conf.size());
-//         let seed = rng.gen();
-//         tokio::join!(
-//             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
-//             receiver.expand(out_fmt, &mut r_out)
-//         );
+        let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
+        let receiver =
+            RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
+        let points = receiver.get_points(out_fmt);
+        let mut s_out = HugePageMemory::zeroed(conf.size());
+        let mut r_out = HugePageMemory::zeroed(conf.size());
+        let seed = rng.gen();
+        tokio::join!(
+            sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
+            receiver.expand(out_fmt, &mut r_out)
+        );
 
-//         xor_inplace(&mut s_out, &r_out);
-//         for (i, blk) in s_out.iter().enumerate() {
-//             let f = points.contains(&i);
-//             let exp = if f { Block::ONES } else { Block::ZERO };
-//             assert_eq!(exp, *blk, "block {i} not as expected");
-//         }
-//     }
-// }
+        xor_inplace(&mut s_out, &r_out);
+        for (i, blk) in s_out.iter().enumerate() {
+            let f = points.contains(&i);
+            let exp = if f { Block::ONES } else { Block::ZERO };
+            assert_eq!(exp, *blk, "block {i} not as expected");
+        }
+    }
+}

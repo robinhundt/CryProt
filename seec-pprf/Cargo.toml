@@ -3,9 +3,6 @@ edition = "2021"
 name = "seec-pprf"
 version = "0.1.0"
 
-[features]
-nightly = ["seec-core/nightly"]
-
 [dependencies]
 aes.workspace = true
 bytemuck.workspace = true

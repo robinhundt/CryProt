@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
-use seec_core::alloc::allocate_zeroed_vec;
+use seec_core::alloc::HugePageMemory;
 use seec_net::testing::{init_bench_tracing, local_conn};
 use seec_ot::{
     base::SimplestOt,
@@ -57,8 +57,8 @@ fn criterion_benchmark(c: &mut Criterion) {
 
             async move {
                 let mut duration = Duration::ZERO;
-                let mut sender_ots = allocate_zeroed_vec(count);
-                let mut receiver_ots = allocate_zeroed_vec(count);
+                let mut sender_ots = HugePageMemory::zeroed(count);
+                let mut receiver_ots = HugePageMemory::zeroed(count);
                 for _ in 0..iters {
                     // setup not included in duration
                     let (mut sender, mut receiver, choices) = {

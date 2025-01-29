@@ -9,12 +9,8 @@ use futures::{SinkExt, StreamExt};
 use ndarray::Array2;
 use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
 use seec_core::{
-    aes_hash::FIXED_KEY_HASH,
-    aes_rng::AesRng,
-    alloc::{allocate_zeroed_vec, HugePageMemory},
-    tokio_rayon::spawn_compute,
-    utils::xor_inplace,
-    Block, AES_PAR_BLOCKS,
+    aes_hash::FIXED_KEY_HASH, aes_rng::AesRng, alloc::allocate_zeroed_vec, buf::Buf,
+    tokio_rayon::spawn_compute, utils::xor_inplace, Block, AES_PAR_BLOCKS,
 };
 use seec_net::Connection;
 use serde::{Deserialize, Serialize};
@@ -66,7 +62,7 @@ impl RegularPprfSender {
         value: Block,
         seed: Block,
         out_fmt: OutFormat,
-        out: &mut HugePageMemory<Block>,
+        out: &mut impl Buf<Block>,
     ) {
         assert_eq!(self.conf.size(), out.len());
         let mut output = mem::take(out);
@@ -193,7 +189,7 @@ impl RegularPprfReceiver {
         }
     }
 
-    pub async fn expand(mut self, out_fmt: OutFormat, out: &mut HugePageMemory<Block>) {
+    pub async fn expand(mut self, out_fmt: OutFormat, out: &mut impl Buf<Block>) {
         assert_eq!(self.conf.size(), out.len());
         let mut output = mem::take(out);
         let (_, mut rx) = self.conn.stream().await.unwrap();
@@ -551,7 +547,7 @@ pub fn fake_base<R: RngCore + CryptoRng>(
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, Rng, SeedableRng};
-    use seec_core::{alloc::HugePageMemory, utils::xor_inplace, Block};
+    use seec_core::{alloc::HugePageMemory, buf::Buf, utils::xor_inplace, Block};
     use seec_net::testing::local_conn;
 
     use crate::{
@@ -616,8 +612,8 @@ mod tests {
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
         let points = receiver.get_points(out_fmt);
         println!("Points: {:?}", points);
-        let mut s_out = HugePageMemory::zeroed(conf.size());
-        let mut r_out = HugePageMemory::zeroed(conf.size());
+        let mut s_out = Vec::zeroed(conf.size());
+        let mut r_out = Vec::zeroed(conf.size());
         let seed = rng.gen();
         tokio::join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),

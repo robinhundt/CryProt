@@ -4,8 +4,7 @@ use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, RistrettoPoint, Sca
 use futures::{SinkExt, StreamExt};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use seec_core::{
-    random_oracle::{Hash, RandomOracle},
-    Block,
+    buf::Buf, random_oracle::{Hash, RandomOracle}, Block
 };
 use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
@@ -51,7 +50,7 @@ impl RotSender for SimplestOt {
     #[allow(non_snake_case)]
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
-    async fn send_into(&mut self, ots: &mut Vec<[Block; 2]>) -> Result<(), Self::Error> {
+    async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
         let a = Scalar::random(&mut self.rng);
         let mut A = RISTRETTO_BASEPOINT_TABLE * &a;
@@ -81,7 +80,7 @@ impl RotSender for SimplestOt {
         }
 
         A *= a;
-        for (i, (mut B, ots)) in B_points.into_iter().zip(ots).enumerate() {
+        for (i, (mut B, ots)) in B_points.into_iter().zip(ots.iter_mut()).enumerate() {
             B *= a;
             let k0 = ro_hash_point(&B, i, seed);
             B -= A;
@@ -101,7 +100,7 @@ impl RotReceiver for SimplestOt {
     async fn receive_into(
         &mut self,
         choices: &[Choice],
-        ots: &mut Vec<Block>,
+        ots: &mut impl Buf<Block>,
     ) -> Result<(), Self::Error> {
         assert_eq!(choices.len(), ots.len());
         let (mut send, mut recv) = self.conn.byte_stream().await?;
@@ -132,7 +131,7 @@ impl RotReceiver for SimplestOt {
         if Hash::from_bytes(commitment) != seed.ro_hash() {
             return Err(Error::CommitmentHashesNotEqual);
         }
-        for (i, (b, ot)) in b_points.into_iter().zip(ots).enumerate() {
+        for (i, (b, ot)) in b_points.into_iter().zip(ots.iter_mut()).enumerate() {
             let B = A * b;
             *ot = ro_hash_point(&B, i, seed);
         }

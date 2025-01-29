@@ -2,13 +2,7 @@ use std::{io, iter, mem};
 
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use seec_core::{
-    aes_hash::FIXED_KEY_HASH,
-    aes_rng::AesRng,
-    alloc::allocate_zeroed_vec,
-    tokio_rayon::spawn_compute,
-    transpose::transpose_bitmatrix,
-    utils::{and_inplace_elem, xor_inplace},
-    Block,
+    aes_hash::FIXED_KEY_HASH, aes_rng::AesRng, alloc::allocate_zeroed_vec, buf::Buf, tokio_rayon::spawn_compute, transpose::transpose_bitmatrix, utils::{and_inplace_elem, xor_inplace}, Block
 };
 use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
@@ -19,7 +13,8 @@ use tokio::{
 use tracing::Level;
 
 use crate::{
-    base::{self, SimplestOt}, phase, random_choices, RotReceiver, RotSender
+    base::{self, SimplestOt},
+    phase, random_choices, RotReceiver, RotSender,
 };
 
 pub const BASE_OT_COUNT: usize = 128;
@@ -109,7 +104,7 @@ impl RotSender for OtExtensionSender {
     /// - If `count % self.batch_size()` is not divisable by 128.
     #[tracing::instrument(level = Level::DEBUG, skip_all)]
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::OT_EXTENSION))]
-    async fn send_into(&mut self, ots: &mut Vec<[Block; 2]>) -> Result<(), Self::Error> {
+    async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
         assert_eq!(0, count % 128, "count must be multiple of 128");
         let batch_size = self.batch_size();
@@ -277,7 +272,7 @@ impl RotReceiver for OtExtensionReceiver {
     async fn receive_into(
         &mut self,
         choices: &[Choice],
-        ots: &mut Vec<Block>,
+        ots: &mut impl Buf<Block>,
     ) -> Result<(), Self::Error> {
         assert_eq!(choices.len(), ots.len());
         assert_eq!(

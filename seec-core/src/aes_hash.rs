@@ -10,7 +10,7 @@ use aes::{
 };
 use bytemuck::Pod;
 
-use crate::{alloc::allocate_zeroed_vec, utils::xor_inplace, Block};
+use crate::{utils::xor_inplace, Block, AES_PAR_BLOCKS};
 
 pub struct AesHash {
     aes: Aes128,
@@ -74,13 +74,16 @@ impl AesHash {
     // TODO this should take a temp buffer. Or maybe I can simply chunk the hashing
     // and use a stack alloced buffer? Should work
     pub fn cr_hash_slice_mut(&self, x: &mut [Block]) {
-        let mut encrypted = allocate_zeroed_vec(x.len());
-        self.aes
-            .encrypt_blocks_b2b(bytemuck::cast_slice_mut(x), &mut encrypted)
-            .unwrap();
-        x.iter_mut()
-            .zip(encrypted)
-            .for_each(|(x, x_enc)| *x ^= x_enc.into());
+        let mut tmp = [aes::Block::default(); AES_PAR_BLOCKS];
+        for chunk in x.chunks_mut(AES_PAR_BLOCKS) {
+            self.aes
+                .encrypt_blocks_b2b(bytemuck::cast_slice(chunk), &mut tmp[..chunk.len()])
+                .unwrap();
+            chunk
+                .iter_mut()
+                .zip(tmp)
+                .for_each(|(x, x_enc)| *x ^= x_enc.into());
+        }
     }
 }
 

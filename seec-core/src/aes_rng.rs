@@ -11,7 +11,7 @@ use aes::Aes128;
 use rand::{CryptoRng, Error, Rng, RngCore, SeedableRng};
 use rand_core::block::{BlockRng, BlockRngCore};
 
-use crate::Block;
+use crate::{Block, AES_PAR_BLOCKS};
 
 // TODO i think softspoken ot has some implementation performance optimizations
 // see sect 7 https://eprint.iacr.org/2022/192.pdf
@@ -38,11 +38,13 @@ impl RngCore for AesRng {
         // fast path so we don't unnecessarily copy u32 from BlockRngCore::generate into
         // dest
         let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(block_bytes);
-        for block in blocks.iter_mut() {
-            *block = bytemuck::cast(self.0.core.state);
-            self.0.core.state += 1;
+        for chunk in blocks.chunks_mut(AES_PAR_BLOCKS) {
+            for block in chunk.iter_mut() {
+                *block = aes::cipher::Array(self.0.core.state.to_ne_bytes());
+                self.0.core.state += 1;
+            }
+            self.0.core.aes.encrypt_blocks(chunk);
         }
-        self.0.core.aes.encrypt_blocks(blocks);
         // handle the tail
         self.0.fill_bytes(rest_bytes)
     }

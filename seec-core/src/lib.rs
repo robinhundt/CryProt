@@ -7,6 +7,7 @@ pub mod random_oracle;
 pub mod tokio_rayon;
 pub mod transpose;
 pub mod utils;
+pub mod buf;
 
 pub use block::Block;
 

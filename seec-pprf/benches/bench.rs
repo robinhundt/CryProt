@@ -1,21 +1,14 @@
-use std::{
-    mem,
-    time::{Duration, Instant},
-};
-
 use aes::{
     cipher::{BlockCipherEncrypt, KeyInit},
     Aes128,
 };
-use bytemuck::checked::cast_slice_mut;
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use seec_core::{
     alloc::{allocate_zeroed_vec, HugePageMemory},
-    test_utils::init_bench_tracing,
     Block,
 };
-use seec_net::testing::local_conn;
+use seec_net::testing::{init_bench_tracing, local_conn};
 use seec_pprf::{
     fake_base, OutFormat, PprfConfig, RegularPprfReceiver, RegularPprfSender, PARALLEL_TREES,
 };
@@ -51,8 +44,8 @@ fn criterion_benchmark(c: &mut Criterion) {
                     receiver_base_ots,
                     base_choices,
                 );
-                // let out1 = HugePageMemory::zeroed(conf.size());
-                // let out2 = HugePageMemory::zeroed(conf.size());
+                let out1 = HugePageMemory::zeroed(conf.size());
+                let out2 = HugePageMemory::zeroed(conf.size());
                 let seed = rng.gen();
                 (sender, receiver, seed, out1, out2)
             },
@@ -99,6 +92,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 }
 
+#[allow(non_snake_case)]
 fn get_reg_noise_weight(min_dist_ratio: f64, N: u64, sec_param: usize) -> u64 {
     assert!(min_dist_ratio <= 0.5 && min_dist_ratio > 0.0);
     let d = (1.0 - 2.0 * min_dist_ratio).log2();

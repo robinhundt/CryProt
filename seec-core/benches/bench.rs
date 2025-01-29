@@ -2,7 +2,12 @@ use std::arch::x86_64::_mm256_setzero_si256;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{thread_rng, RngCore};
-use seec_core::transpose::{avx2, portable};
+use seec_core::{
+    aes_hash::FIXED_KEY_HASH,
+    aes_rng::AesRng,
+    buf::Buf,
+    transpose::{avx2, portable},
+};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rows = 128;
@@ -42,6 +47,21 @@ fn criterion_benchmark(c: &mut Criterion) {
             |mut bitmat| avx2::avx_transpose128x128(&mut bitmat),
             BatchSize::SmallInput,
         )
+    });
+
+    let mut buf = Vec::zeroed(4 * 1024_usize.pow(2));
+    c.bench_function("cr_hash_slice_mut", |b| {
+        b.iter(|| {
+            FIXED_KEY_HASH.cr_hash_slice_mut(&mut buf);
+        });
+    });
+
+    let mut buf = Vec::zeroed(100 * 1024_usize.pow(2));
+    let mut rng = AesRng::new();
+    c.bench_function("aes rng fill_bytes", |b| {
+        b.iter(|| {
+            rng.fill_bytes(&mut buf);
+        });
     });
 }
 

@@ -10,10 +10,7 @@ use aes::{
 };
 use bytemuck::Pod;
 
-use crate::{
-    utils::{allocate_zeroed_vec, xor_inplace},
-    Block,
-};
+use crate::{alloc::allocate_zeroed_vec, utils::xor_inplace, Block};
 
 pub struct AesHash {
     aes: Aes128,
@@ -74,6 +71,8 @@ impl AesHash {
         xor_inplace(out, inp);
     }
 
+    // TODO this should take a temp buffer. Or maybe I can simply chunk the hashing
+    // and use a stack alloced buffer? Should work
     pub fn cr_hash_slice_mut(&self, x: &mut [Block]) {
         let mut encrypted = allocate_zeroed_vec(x.len());
         self.aes
@@ -87,8 +86,6 @@ impl AesHash {
 
 /// An `AesHash` with a fixed key.
 pub static FIXED_KEY_HASH: LazyLock<AesHash> = LazyLock::new(|| {
-    // TODO: Is it sufficient to just choose some random key? This one was generated
-    //  by just using `rand::thread_rng().gen()`
     let key = 193502124791825095790518994062991136444_u128
         .to_le_bytes()
         .into();

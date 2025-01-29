@@ -1,10 +1,10 @@
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
+use std::ops::{Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 
 use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
-use subtle::{Choice, ConditionallySelectable};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 use wide::u8x16;
 
 use crate::random_oracle::RandomOracle;
@@ -119,7 +119,9 @@ impl Not for Block {
 
 impl PartialEq for Block {
     fn eq(&self, other: &Self) -> bool {
-        self.0.as_array_ref() == other.0.as_array_ref()
+        let a: u128 = (*self).into();
+        let b: u128 = (*other).into();
+        a.ct_eq(&b).into()
     }
 }
 
@@ -154,6 +156,19 @@ impl From<cipher::Array<u8, sizes::U16>> for Block {
     }
 }
 
+impl From<Block> for u128 {
+    fn from(value: Block) -> Self {
+        // todo correct endianness?
+        u128::from_ne_bytes(*value.as_bytes())
+    }
+}
+
+impl From<u128> for Block {
+    fn from(value: u128) -> Self {
+        Self::new(value.to_ne_bytes())
+    }
+}
+
 impl ConditionallySelectable for Block {
     #[inline]
     // adapted from https://github.com/dalek-cryptography/subtle/blob/369e7463e85921377a5f2df80aabcbbc6d57a930/src/lib.rs#L510-L517
@@ -162,6 +177,28 @@ impl ConditionallySelectable for Block {
         // if choice = 1, mask = (-1) = 1111...1111
         let mask = Block::new((-(choice.unwrap_u8() as i128)).to_le_bytes());
         *a ^ (mask & (*a ^ *b))
+    }
+}
+
+impl Add for Block {
+    type Output = Block;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        // todo is this a sensible implementation?
+        let a: u128 = self.into();
+        let b: u128 = rhs.into();
+        Self::from(a.wrapping_add(b))
+    }
+}
+
+#[cfg(feature = "num-traits")]
+impl num_traits::Zero for Block {
+    fn zero() -> Self {
+        Self::ZERO
+    }
+
+    fn is_zero(&self) -> bool {
+        *self == Self::ZERO
     }
 }
 

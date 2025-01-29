@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use rand::{distributions, prelude::Distribution, CryptoRng, Rng};
-use seec_core::{utils::allocate_zeroed_vec, Block};
+use seec_core::{alloc::allocate_zeroed_vec, Block};
 use subtle::Choice;
 
 pub mod base;

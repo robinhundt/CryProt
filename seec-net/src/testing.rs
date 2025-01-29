@@ -77,7 +77,7 @@ impl Drop for TestCommLayerDataGuard {
 /// should be the first call in each test, with the returned value being
 /// assigned to a variable to prevent dropping. Output can be configured via
 /// RUST_LOG env variable as explained [here](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html).
-/// 
+///
 /// When the [`TestCommLayerDataGuard`] is dropped, it logs the metrics data
 /// with `Level::INFO`.
 ///
@@ -98,7 +98,8 @@ pub fn init_tracing() -> (TestCommLayerDataGuard, tracing::dispatcher::DefaultGu
         .with(fmt_layer) // Layer terminal logging
         .with(comm_layer); // Layer your custom comm_layer
 
-    // order of returns is important, wrapped comm_data needs to be dropped before tracing guard to actually log comm data
+    // order of returns is important, wrapped comm_data needs to be dropped before
+    // tracing guard to actually log comm data
     (
         TestCommLayerDataGuard(comm_data),
         tracing::subscriber::set_default(subscriber),

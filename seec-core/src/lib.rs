@@ -2,12 +2,12 @@ pub mod aes_hash;
 pub mod aes_rng;
 pub mod alloc;
 pub mod block;
+pub mod buf;
 pub mod random_oracle;
 #[cfg(feature = "tokio-rayon")]
 pub mod tokio_rayon;
 pub mod transpose;
 pub mod utils;
-pub mod buf;
 
 pub use block::Block;
 

@@ -2,7 +2,14 @@ use std::{io, iter, mem};
 
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use seec_core::{
-    aes_hash::FIXED_KEY_HASH, aes_rng::AesRng, alloc::allocate_zeroed_vec, buf::Buf, tokio_rayon::spawn_compute, transpose::transpose_bitmatrix, utils::{and_inplace_elem, xor_inplace}, Block
+    aes_hash::FIXED_KEY_HASH,
+    aes_rng::AesRng,
+    alloc::allocate_zeroed_vec,
+    buf::Buf,
+    tokio_rayon::spawn_compute,
+    transpose::transpose_bitmatrix,
+    utils::{and_inplace_elem, xor_inplace},
+    Block,
 };
 use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};

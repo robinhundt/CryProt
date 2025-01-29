@@ -63,4 +63,3 @@ pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<
         .map(Choice::from)
         .collect()
 }
-

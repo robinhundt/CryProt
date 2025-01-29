@@ -4,7 +4,9 @@ use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, RistrettoPoint, Sca
 use futures::{SinkExt, StreamExt};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use seec_core::{
-    buf::Buf, random_oracle::{Hash, RandomOracle}, Block
+    buf::Buf,
+    random_oracle::{Hash, RandomOracle},
+    Block,
 };
 use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
@@ -155,7 +157,7 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 mod tests {
     use anyhow::Result;
     use rand::{rngs::StdRng, SeedableRng};
-    use seec_net::testing::{local_conn, init_tracing};
+    use seec_net::testing::{init_tracing, local_conn};
 
     use super::SimplestOt;
     use crate::{random_choices, RotReceiver, RotSender};

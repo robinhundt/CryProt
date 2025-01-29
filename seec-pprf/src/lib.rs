@@ -1,3 +1,4 @@
+//! # Distributed Puncturable Pseudorandom Function (PPRF) Implementation
 use std::{array, cmp::Ordering, mem};
 
 use aes::{

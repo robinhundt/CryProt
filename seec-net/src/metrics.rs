@@ -162,7 +162,8 @@ where
             return;
         };
 
-        // TODO can merging of comm data be done in a background thread? Benchmark first!
+        // TODO can merging of comm data be done in a background thread? Benchmark
+        // first!
         if let Some(parent) = span.parent() {
             if let Some(parent_comm_data) = parent.extensions_mut().get_mut::<CommData>() {
                 let entry = parent_comm_data

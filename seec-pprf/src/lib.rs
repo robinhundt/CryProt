@@ -113,11 +113,10 @@ impl RegularPprfSender {
                     while child_idx < width {
                         let parent_idx = child_idx >> 1;
                         let parent = &lvl0[parent_idx];
-                        for keep in 0..2 {
+                        for (aes, sums) in aes.iter().zip(&mut tree_grp.sums) {
                             let child = &mut lvl1[child_idx];
-                            let sum = &mut tree_grp.sums[keep][d];
-                            aes[keep]
-                                .encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
+                            let sum = &mut sums[d];
+                            aes.encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
                                 .expect("parent and child have same len");
                             xor_inplace(child, parent);
                             xor_inplace(sum, child);
@@ -222,7 +221,6 @@ impl RegularPprfReceiver {
                         let active = self.base_choices[(i + g, depth - 1)] as usize;
                         lvl1[active ^ 1][i] =
                             self.base_ots[(i + g, depth - 1)] ^ tree_grp.sums[active ^ 1][0][i];
-                        lvl1[active ^ 1][i];
                         lvl1[active][i] = Block::ZERO;
                     }
                 }
@@ -246,11 +244,9 @@ impl RegularPprfReceiver {
                     while child_idx < width {
                         let parent_idx = child_idx >> 1;
                         let parent = &lvl0[parent_idx];
-                        for keep in 0..2 {
+                        for (aes, sum) in aes.iter().zip(&mut my_sums) {
                             let child = &mut lvl1[child_idx];
-                            let sum = &mut my_sums[keep];
-                            aes[keep]
-                                .encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
+                            aes.encrypt_blocks_b2b(cast_slice(parent), cast_slice_mut(child))
                                 .expect("parent and child have same len");
                             xor_inplace(child, parent);
                             xor_inplace(sum, child);
@@ -349,7 +345,7 @@ impl RegularPprfReceiver {
             let mut idx = dist.sample(rng);
             for choice_bit in choice {
                 *choice_bit = (idx & 1) as u8;
-                idx = idx >> 1;
+                idx >>= 1;
             }
         }
         choices
@@ -450,9 +446,8 @@ fn copy_out(
                 let o_idx = total_trees * leaf_idx + tree_idx;
                 let i_idx = leaf_idx * PARALLEL_TREES;
                 // todo copy from slice
-                for j in 0..curr_size {
-                    output[o_idx + j] = last_lvl[i_idx + j];
-                }
+                output[o_idx..curr_size + o_idx]
+                    .copy_from_slice(&last_lvl[i_idx..curr_size + i_idx]);
             }
         }
         OutFormat::ByTreeIndex => todo!(),
@@ -498,7 +493,7 @@ impl PprfConfig {
             pnt_count % PARALLEL_TREES,
             "pnt_count must be divisable by {PARALLEL_TREES}"
         );
-        let depth = log2_ceil(domain) as usize;
+        let depth = log2_ceil(domain);
         Self {
             pnt_count,
             domain,

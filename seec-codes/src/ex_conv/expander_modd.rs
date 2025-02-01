@@ -49,13 +49,13 @@ impl ExpanderModd {
         self.refill();
     }
 
-    pub(crate) fn get(&mut self) -> u64 {
+    pub(crate) fn get(&mut self) -> usize {
         if self.idx == self.vals.len() {
             self.refill();
         }
         let val = self.vals[self.idx];
         self.idx += 1;
-        val
+        val as usize
     }
 
     fn refill(&mut self) {
@@ -97,7 +97,7 @@ mod tests {
     fn test_expander_modd() {
         let seed = StdRng::seed_from_u64(3454).gen();
         let m = 100;
-        let mut expander = ExpanderModd::new(seed, m);
+        let mut expander = ExpanderModd::new(seed, m as u64);
 
         for _ in 0..1000 {
             let val = expander.get();
@@ -109,7 +109,7 @@ mod tests {
     fn test_expander_modd_pow2() {
         let seed = StdRng::seed_from_u64(3454).gen();
         let m = 128; // Power of 2
-        let mut expander = ExpanderModd::new(seed, m);
+        let mut expander = ExpanderModd::new(seed, m as u64);
 
         for _ in 0..1000 {
             let val = expander.get();

@@ -1,5 +1,7 @@
 use seec_core::Block;
 
+use crate::GF2ops;
+
 use super::expander_modd::ExpanderModd;
 
 #[derive(Debug, Clone, Copy)]
@@ -7,19 +9,19 @@ pub(crate) struct ExpanderCode {
     // the seed that generates the code.
     seed: Block,
     // The message size of the code. K.
-    message_size: u64,
+    message_size: usize,
     // The codeword size of the code. n.
-    code_size: u64,
+    code_size: usize,
     // The row weight of the B matrix.
-    expander_weight: u64,
+    expander_weight: usize,
     regular: bool,
 }
 
 impl ExpanderCode {
     pub(crate) fn new(
-        message_size: u64,
-        code_size: u64,
-        expander_weight: u64,
+        message_size: usize,
+        code_size: usize,
+        expander_weight: usize,
         regular_expander: bool,
         seed: Block,
     ) -> Self {
@@ -32,27 +34,27 @@ impl ExpanderCode {
         }
     }
 
-    pub(crate) fn expand<const ADD: bool>(&self, inp: &[Block], mut out: &mut [Block]) {
+    pub(crate) fn expand<const ADD: bool, T: GF2ops>(&self, inp: &[T], mut out: &mut [T]) {
         let main = self.message_size / 8 * 8;
         let mut i = 0;
         let mut reg = 0;
         let mut uni = self.expander_weight;
         let mut step = 0;
-        let mut uni_gen = ExpanderModd::new(self.seed, self.code_size);
+        let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
         let mut reg_gen = if self.regular {
             uni = self.expander_weight / 2;
             reg = self.expander_weight - uni;
             step = self.code_size / reg;
             Some(ExpanderModd::new(
                 self.seed ^ Block::from([23421341, 342342134]),
-                step,
+                step as u64,
             ))
         } else {
             None
         };
 
         if !ADD {
-            out.fill(Block::ZERO);
+            out.fill(T::ZERO);
         }
 
         while i < main {
@@ -63,7 +65,7 @@ impl ExpanderCode {
                         *r = reg_gen.get() + j * step;
                     }
                     for (o, r) in out.iter_mut().zip(rr) {
-                        *o ^= inp[r as usize];
+                        *o ^= inp[r];
                     }
                 }
             }
@@ -74,7 +76,7 @@ impl ExpanderCode {
                     *r = uni_gen.get();
                 }
                 for (o, r) in out.iter_mut().zip(rr) {
-                    *o ^= inp[r as usize];
+                    *o ^= inp[r];
                 }
             }
             i += 8;
@@ -84,12 +86,12 @@ impl ExpanderCode {
         while i < self.message_size {
             if let Some(reg_gen) = &mut reg_gen {
                 for j in 0..reg {
-                    out[0] ^= inp[(reg_gen.get() + j * step) as usize];
+                    out[0] ^= inp[reg_gen.get() + j * step];
                 }
             }
 
             for _j in 0..uni {
-                out[0] ^= inp[uni_gen.get() as usize];
+                out[0] ^= inp[uni_gen.get()];
             }
 
             i += 1;
@@ -119,7 +121,7 @@ mod tests {
 
         let mut output = vec![Block::ZERO; 16];
 
-        code.expand::<false>(&input, &mut output);
+        code.expand::<false, _>(&input, &mut output);
 
         assert_ne!(input, output);
         assert!(
@@ -138,7 +140,7 @@ mod tests {
         StdRng::seed_from_u64(2342).fill_bytes(cast_slice_mut(&mut input));
         let mut output = vec![Block::ZERO; 8];
 
-        code.expand::<false>(&input, &mut output);
+        code.expand::<false, _>(&input, &mut output);
 
         assert_ne!(input, output);
         assert!(
@@ -159,7 +161,7 @@ mod tests {
         let mut output = vec![Block::from([2, 2]); 32]; // Pre-filled output
         let original_output = output.clone();
 
-        code.expand::<true>(&input, &mut output);
+        code.expand::<true, _>(&input, &mut output);
 
         assert_ne!(input, output);
         assert_ne!(original_output, output);

@@ -1,7 +1,8 @@
 use expander::ExpanderCode;
 use fast_aes_rng::FastAesRng;
-use gf128::mul_const;
 use seec_core::block::Block;
+
+use crate::GF2ops;
 
 mod expander;
 mod expander_modd;
@@ -12,18 +13,18 @@ mod gf128;
 pub struct ExConvCode {
     expander: ExpanderCode,
     conf: ExConvCodeConfig,
-    message_size: u64,
+    message_size: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExConvCodeConfig {
     pub seed: Block,
-    pub code_size: u64,
-    pub accumulator_size: u64,
+    pub code_size: usize,
+    pub accumulator_size: usize,
     pub systematic: bool,
     pub acc_twice: bool,
     pub regular_expander: bool,
-    pub expander_weight: u64,
+    pub expander_weight: usize,
 }
 
 impl Default for ExConvCodeConfig {
@@ -43,17 +44,17 @@ impl Default for ExConvCodeConfig {
 const CC_BLOCK: Block = Block::new([0xcc; 16]);
 
 impl ExConvCode {
-    pub fn new(message_size: u64) -> Self {
+    pub fn new(message_size: usize) -> Self {
         Self::new_with_conf(message_size, ExConvCodeConfig::default())
     }
 
-    pub fn new_with_conf(message_size: u64, mut conf: ExConvCodeConfig) -> Self {
+    pub fn new_with_conf(message_size: usize, mut conf: ExConvCodeConfig) -> Self {
         if conf.code_size == 0 {
             conf.code_size = 2 * message_size;
         }
         let expander = ExpanderCode::new(
             message_size,
-            conf.code_size - message_size * (conf.systematic as u64),
+            conf.code_size - message_size * (conf.systematic as usize),
             conf.expander_weight,
             conf.regular_expander,
             conf.seed ^ CC_BLOCK,
@@ -65,19 +66,19 @@ impl ExConvCode {
         }
     }
 
-    pub fn parity_rows(&self) -> u64 {
+    pub fn parity_rows(&self) -> usize {
         self.conf.code_size - self.message_size
     }
 
-    pub fn parity_cols(&self) -> u64 {
+    pub fn parity_cols(&self) -> usize {
         self.conf.code_size
     }
 
-    pub fn generator_rows(&self) -> u64 {
+    pub fn generator_rows(&self) -> usize {
         self.message_size
     }
 
-    pub fn generator_cols(&self) -> u64 {
+    pub fn generator_cols(&self) -> usize {
         self.conf.code_size
     }
 
@@ -85,48 +86,48 @@ impl ExConvCode {
         &self.conf
     }
 
-    pub fn dual_encode(&self, e: &mut [Block]) {
+    pub fn dual_encode<T: GF2ops>(&self, e: &mut [T]) {
         if self.conf.systematic {
-            let (prefix, suffix) = e.split_at_mut(self.message_size as usize);
+            let (prefix, suffix) = e.split_at_mut(self.message_size);
             self.accumulate(suffix);
-            self.expander.expand::<true>(suffix, prefix);
+            self.expander.expand::<true, _>(suffix, prefix);
         } else {
             self.accumulate(e);
-            let mut w = vec![Block::ZERO; self.message_size as usize];
-            self.expander.expand::<false>(e, &mut w);
-            e[..self.message_size as usize].copy_from_slice(&w);
+            let mut w = vec![T::ZERO; self.message_size];
+            self.expander.expand::<false, _>(e, &mut w);
+            e[..self.message_size].copy_from_slice(&w);
         }
     }
 
-    fn accumulate(&self, x: &mut [Block]) {
-        let size = self.conf.code_size - (self.conf.systematic as u64) * self.message_size;
-        debug_assert_eq!(size as usize, x.len());
+    fn accumulate<T: GF2ops>(&self, x: &mut [T]) {
+        let size = self.conf.code_size - (self.conf.systematic as usize) * self.message_size;
+        debug_assert_eq!(size, x.len());
 
         match self.conf.accumulator_size {
             24 => {
-                self.accumulate_fixed::<24>(x, self.conf.seed);
+                self.accumulate_fixed::<24, _>(x, self.conf.seed);
                 if self.conf.acc_twice {
-                    self.accumulate_fixed::<24>(x, !self.conf.seed);
+                    self.accumulate_fixed::<24, _>(x, !self.conf.seed);
                 }
             }
             _ => {
-                self.accumulate_fixed::<0>(x, self.conf.seed);
+                self.accumulate_fixed::<0, _>(x, self.conf.seed);
                 if self.conf.acc_twice {
-                    self.accumulate_fixed::<0>(x, !self.conf.seed);
+                    self.accumulate_fixed::<0, _>(x, !self.conf.seed);
                 }
             }
         }
     }
 
-    fn accumulate_fixed<const ACCUMULATOR_SIZE: u64>(&self, x: &mut [Block], seed: Block) {
+    fn accumulate_fixed<const ACCUMULATOR_SIZE: usize, T: GF2ops>(&self, x: &mut [T], seed: Block) {
         let mut i = 0;
-        let main = x.len() as u64 - 1 - self.conf.accumulator_size;
+        let main = x.len() - 1 - self.conf.accumulator_size;
 
         let mut rng = FastAesRng::new(seed);
         let mut mtx_coeffs = rng.bytes();
 
         while i < main {
-            if mtx_coeffs.len() < self.conf.accumulator_size.div_ceil(8) as usize {
+            if mtx_coeffs.len() < self.conf.accumulator_size.div_ceil(8) {
                 rng.refill();
                 mtx_coeffs = rng.bytes();
             }
@@ -134,14 +135,14 @@ impl ExConvCode {
             if ACCUMULATOR_SIZE == 0 {
                 self.acc_one_gen(x, i, mtx_coeffs, false);
             } else {
-                self.acc_one::<ACCUMULATOR_SIZE>(x, i, mtx_coeffs, false);
+                self.acc_one::<ACCUMULATOR_SIZE, _>(x, i, mtx_coeffs, false);
             }
             mtx_coeffs = &mtx_coeffs[1..];
             i += 1;
         }
 
-        while i < x.len() as u64 {
-            if mtx_coeffs.len() < self.conf.accumulator_size.div_ceil(8) as usize {
+        while i < x.len() {
+            if mtx_coeffs.len() < self.conf.accumulator_size.div_ceil(8) {
                 rng.refill();
                 mtx_coeffs = rng.bytes();
             }
@@ -149,16 +150,22 @@ impl ExConvCode {
             if ACCUMULATOR_SIZE == 0 {
                 self.acc_one_gen(x, i, mtx_coeffs, true);
             } else {
-                self.acc_one::<ACCUMULATOR_SIZE>(x, i, mtx_coeffs, true);
+                self.acc_one::<ACCUMULATOR_SIZE, _>(x, i, mtx_coeffs, true);
             }
             mtx_coeffs = &mtx_coeffs[1..];
             i += 1;
         }
     }
 
-    fn acc_one_gen(&self, x: &mut [Block], i: u64, mut matrix_coeffs: &[u8], range_check: bool) {
-        let size = x.len() as u64;
-        let xi = x[i as usize];
+    fn acc_one_gen<T: GF2ops>(
+        &self,
+        x: &mut [T],
+        i: usize,
+        mut matrix_coeffs: &[u8],
+        range_check: bool,
+    ) {
+        let size = x.len();
+        let xi = x[i];
         let mut j = i + 1;
         if range_check && j >= size {
             j -= size;
@@ -184,8 +191,7 @@ impl ExConvCode {
             let mut p = 0;
             while p < 8 && k < self.conf.accumulator_size {
                 if b & 1 != 0 {
-                    let idx = j as usize;
-                    x[idx] ^= xi;
+                    x[j] ^= xi;
                 }
                 p += 1;
                 k += 1;
@@ -198,19 +204,18 @@ impl ExConvCode {
             k += 1;
         }
 
-        let idx = j as usize;
+        let idx = j;
         x[idx] ^= xi;
-        x[idx] = mul_const(x[idx]);
     }
 
-    fn acc_one<const ACCUMULATOR_SIZE: u64>(
+    fn acc_one<const ACCUMULATOR_SIZE: usize, T: GF2ops>(
         &self,
-        x: &mut [Block],
-        i: u64,
+        x: &mut [T],
+        i: usize,
         mut matrix_coeffs: &[u8],
         range_check: bool,
     ) {
-        let size = x.len() as u64;
+        let size = x.len();
         let mut j = i + 1;
         if range_check && j >= size {
             j -= size;
@@ -228,14 +233,13 @@ impl ExConvCode {
             k += 8;
         }
 
-        let idx = j as usize;
-        x[idx] ^= x[i as usize];
-        x[idx] = mul_const(x[idx]);
+        let idx = j;
+        x[idx] ^= x[i];
     }
 
-    fn acc_one_8(&self, x: &mut [Block], i: u64, j: u64, b: u8, range_check: bool) {
-        let size = x.len() as u64;
-        let xi = x[i as usize];
+    fn acc_one_8<T: GF2ops>(&self, x: &mut [T], i: usize, j: usize, b: u8, range_check: bool) {
+        let size = x.len();
+        let xi = x[i];
         let mut js = [j, j + 1, j + 2, j + 3, j + 4, j + 5, j + 6, j + 7];
 
         if range_check {
@@ -258,28 +262,28 @@ impl ExConvCode {
         // I've tried replacing these index operations with unchecked ones, but there is
         // no measurable performance boost
         if b0 != 0 {
-            x[js[0] as usize] ^= xi;
+            x[js[0]] ^= xi;
         }
         if b1 != 0 {
-            x[js[1] as usize] ^= xi;
+            x[js[1]] ^= xi;
         }
         if b2 != 0 {
-            x[js[2] as usize] ^= xi;
+            x[js[2]] ^= xi;
         }
         if b3 != 0 {
-            x[js[3] as usize] ^= xi;
+            x[js[3]] ^= xi;
         }
         if b4 != 0 {
-            x[js[4] as usize] ^= xi;
+            x[js[4]] ^= xi;
         }
         if b5 != 0 {
-            x[js[5] as usize] ^= xi;
+            x[js[5]] ^= xi;
         }
         if b6 != 0 {
-            x[js[6] as usize] ^= xi;
+            x[js[6]] ^= xi;
         }
         if b7 != 0 {
-            x[js[7] as usize] ^= xi;
+            x[js[7]] ^= xi;
         }
     }
 }
@@ -347,7 +351,7 @@ mod tests {
         let exconv = ExConvCode::new(message_size);
         let code_size = exconv.conf.code_size;
 
-        let mut data = vec![Block::ZERO; code_size as usize];
+        let mut data = vec![Block::ZERO; code_size];
         let mut rng = StdRng::seed_from_u64(2423);
         for _ in 0..100 {
             rng.fill_bytes(cast_slice_mut(&mut data));
@@ -355,12 +359,37 @@ mod tests {
             exconv.dual_encode(&mut data);
 
             let mut libote_exconv = libote::ExConvCode::new(
-                message_size,
-                code_size,
-                exconv.conf.expander_weight,
-                exconv.conf.accumulator_size,
+                message_size as u64,
+                code_size as u64,
+                exconv.conf.expander_weight as u64,
+                exconv.conf.accumulator_size as u64,
             );
             libote_exconv.dual_encode_block(cast_slice_mut(&mut data_libote));
+
+            assert_eq!(data, data_libote);
+        }
+    }
+
+    #[test]
+    fn test_compare_to_libote_bytes() {
+        let message_size = 200;
+        let exconv = ExConvCode::new(message_size);
+        let code_size = exconv.conf.code_size;
+
+        let mut data = vec![u8::ZERO; code_size];
+        let mut rng = StdRng::seed_from_u64(2423);
+        for _ in 0..100 {
+            rng.fill_bytes(cast_slice_mut(&mut data));
+            let mut data_libote = data.clone();
+            exconv.dual_encode(&mut data);
+
+            let mut libote_exconv = libote::ExConvCode::new(
+                message_size as u64,
+                code_size as u64,
+                exconv.conf.expander_weight as u64,
+                exconv.conf.accumulator_size as u64,
+            );
+            libote_exconv.dual_encode_byte(&mut data_libote);
 
             assert_eq!(data, data_libote);
         }

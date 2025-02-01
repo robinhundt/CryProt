@@ -38,6 +38,8 @@ mod tests {
     #[cfg(target_feature = "aes")]
     #[test]
     fn aes_par_block_size() {
+        use hybrid_array::typenum::Unsigned;
+
         struct GetParBlockSize;
         impl BlockSizeUser for GetParBlockSize {
             type BlockSize = aes::cipher::array::sizes::U16;
@@ -50,9 +52,7 @@ mod tests {
                 assert_eq!(
                     AES_PAR_BLOCKS,
                     // size_of ArrayType<u8> is equal to its length
-                    mem::size_of::<
-                        <<B as ParBlocksSizeUser>::ParBlocksSize as ArraySize>::ArrayType<u8>,
-                    >()
+                    <<B as ParBlocksSizeUser>::ParBlocksSize as Unsigned>::USIZE,
                 );
             }
         }

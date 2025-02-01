@@ -1,5 +1,5 @@
 [workspace]
-members = ["seec-core", "seec-net", "seec-ot", "seec-pprf"]
+members = ["seec-codes", "seec-core", "seec-net", "seec-ot", "seec-pprf"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -7,8 +7,12 @@ aes = "0.9.0-pre.2"
 anyhow = "1.0.86"
 bitvec = "1.0.1"
 bytemuck = "1.21.0"
+cpufeatures = "0.2.17"
 criterion = { version = "0.4", features = ["async_tokio", "html_reports"] }
+fastdivide = "0.4.2"
 futures = "0.3.30"
+hybrid-array = { version = "0.2.3", features = ["bytemuck"] }
+libc = "0.2.169"
 ndarray = "0.16.1"
 num-traits = "0.2.19"
 rand = "0.8.5"
@@ -21,7 +25,6 @@ thiserror = "2.0.9"
 tokio = "1.37.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-libc = "0.2.169"
 
 [profile.profiling]
 debug = true

@@ -1,0 +1,21 @@
+[package]
+edition = "2021"
+name = "seec-codes"
+version = "0.1.0"
+
+[dependencies]
+aes = { workspace = true, features = ["hazmat"] }
+bytemuck.workspace = true
+cpufeatures.workspace = true
+fastdivide.workspace = true
+hybrid-array = { workspace = true }
+rand.workspace = true
+seec-core.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+libote = { path = "../../SEEC/libs/libote-rs" }
+
+[[bench]]
+harness = false
+name = "bench"

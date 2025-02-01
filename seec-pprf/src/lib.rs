@@ -11,7 +11,7 @@ use ndarray::Array2;
 use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
 use seec_core::{
     aes_hash::FIXED_KEY_HASH, aes_rng::AesRng, alloc::allocate_zeroed_vec, buf::Buf,
-    tokio_rayon::spawn_compute, utils::xor_inplace, Block, AES_PAR_BLOCKS,
+    tokio_rayon::spawn_compute, utils::{log2_ceil, xor_inplace}, Block, AES_PAR_BLOCKS,
 };
 use seec_net::Connection;
 use serde::{Deserialize, Serialize};
@@ -516,15 +516,6 @@ impl PprfConfig {
 
     pub fn size(&self) -> usize {
         self.domain() * self.pnt_count()
-    }
-}
-
-fn log2_ceil(val: usize) -> usize {
-    let log2 = val.ilog2();
-    if val > (1 << log2) {
-        (log2 + 1) as usize
-    } else {
-        log2 as usize
     }
 }
 

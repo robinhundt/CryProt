@@ -1,13 +1,18 @@
-use std::time::{Duration, Instant};
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use rand::{rngs::StdRng, SeedableRng};
-use seec_core::alloc::HugePageMemory;
+use seec_core::{alloc::HugePageMemory, Block};
 use seec_net::testing::{init_bench_tracing, local_conn};
 use seec_ot::{
     base::SimplestOt,
     extension::{OtExtensionReceiver, OtExtensionSender},
-    random_choices, RotReceiver, RotSender,
+    random_choices,
+    silent_ot::{ChoiceBitPacking, SilentOtReceiver, SilentOtSender},
+    RotReceiver, RotSender,
 };
 use tokio::runtime::{self, Runtime};
 
@@ -17,6 +22,12 @@ fn create_mt_runtime(threads: usize) -> Runtime {
         .enable_all()
         .build()
         .unwrap()
+}
+
+fn get_var_size(var: &str, default: u32) -> u32 {
+    env::var(var)
+        .map(|s| s.parse().expect("not a number"))
+        .unwrap_or(default)
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -47,10 +58,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         )
     });
 
-    let count = 2_usize.pow(24);
+    let p = get_var_size("SEEC_BENCH_OT_POWER", 24);
+    let count = 2_usize.pow(p);
     let mut g = c.benchmark_group("OT extension");
     g.sample_size(10);
-    g.bench_function("2**24 extension OTs", |b| {
+    g.throughput(criterion::Throughput::Elements(count as u64));
+    g.bench_function(format!("single 2**{p} extension OTs"), |b| {
         b.to_async(&rt).iter_custom(|iters| {
             let mut c11 = c1.sub_connection();
             let mut c22 = c2.sub_connection();
@@ -94,8 +107,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         })
     });
 
-    let count = 2_usize.pow(24);
-    g.bench_function("2 parallel 2**24 extension OTs", |b| {
+    g.bench_function(format!("2 parallel 2**{p} extension OTs"), |b| {
         b.to_async(&rt).iter_custom(|iters| {
             let mut c11 = c1.sub_connection();
             let mut c22 = c2.sub_connection();
@@ -144,6 +156,77 @@ fn criterion_benchmark(c: &mut Criterion) {
                     ot2.unwrap();
                     ot3.unwrap();
                     ot4.unwrap();
+                }
+                duration
+            }
+        })
+    });
+    drop(g);
+
+    let mut g = c.benchmark_group("silent extension");
+    let p = get_var_size("SEEC_BENCH_SILENT_OT_POWER", 21);
+    let count = 2_usize.pow(p);
+    g.sample_size(10);
+    g.throughput(criterion::Throughput::Elements(count as u64));
+    g.bench_function(format!("2**{p} correlated extension OTs"), |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let c11 = c1.sub_connection();
+            let c22 = c2.sub_connection();
+
+            async move {
+                let mut duration = Duration::ZERO;
+                // setup not included in duration
+                let mut sender = SilentOtSender::new(c11);
+                let mut receiver = SilentOtReceiver::new(c22);
+                for _ in 0..iters {
+                    let now = Instant::now();
+                    (sender, receiver) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender.correlated_send(count, Block::ONES).await;
+                            sender
+                        }),
+                        tokio::spawn(async move {
+                            receiver
+                                .correlated_receive(
+                                    count,
+                                    ChoiceBitPacking::Packed,
+                                )
+                                .await;
+                            receiver
+                        })
+                    )
+                    .unwrap();
+                    duration += now.elapsed();
+                }
+                duration
+            }
+        })
+    });
+
+    g.bench_function(format!("2**{p} random extension OTs"), |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let c11 = c1.sub_connection();
+            let c22 = c2.sub_connection();
+
+            async move {
+                let mut duration = Duration::ZERO;
+                // setup not included in duration
+                let mut sender = SilentOtSender::new(c11);
+                let mut receiver = SilentOtReceiver::new(c22);
+                for _ in 0..iters {
+                    let now = Instant::now();
+                    (sender, receiver) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender.random_send(count).await;
+                            sender
+                        }),
+                        tokio::spawn(async move {
+                            receiver.random_receive(count).await;
+                            receiver
+                        })
+                    )
+                    .unwrap();
+                    duration += now.elapsed();
                 }
                 duration
             }

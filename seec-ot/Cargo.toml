@@ -14,8 +14,10 @@ curve25519-dalek = { version = "4.1.3", features = ["rand_core", "serde"] }
 futures.workspace = true
 rand.workspace = true
 rayon = "1.10.0"
-seec-core = {workspace = true, features = ["tokio-rayon"]}
+seec-codes.workspace = true
+seec-core = { workspace = true, features = ["tokio-rayon"] }
 seec-net.workspace = true
+seec-pprf.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util"] }

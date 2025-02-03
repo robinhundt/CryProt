@@ -16,6 +16,7 @@ use seec_core::{
 use seec_net::Connection;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
+use tracing::Level;
 
 pub struct RegularPprfSender {
     conn: Connection,
@@ -58,6 +59,7 @@ impl RegularPprfSender {
         }
     }
 
+    #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "PprfExpand"))]
     pub async fn expand(
         mut self,
         value: Block,
@@ -190,6 +192,7 @@ impl RegularPprfReceiver {
         }
     }
 
+    #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "PprfExpand"))]
     pub async fn expand(mut self, out_fmt: OutFormat, out: &mut impl Buf<Block>) {
         assert_eq!(self.conf.size(), out.len());
         let mut output = mem::take(out);

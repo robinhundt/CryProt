@@ -1,6 +1,10 @@
+use std::mem;
+
+use bytemuck::cast_slice_mut;
 use expander::ExpanderCode;
 use fast_aes_rng::FastAesRng;
 use seec_core::block::Block;
+use seq_macro::seq;
 
 use crate::GF2ops;
 
@@ -82,11 +86,16 @@ impl ExConvCode {
         self.conf.code_size
     }
 
+    pub fn message_size(&self) -> usize {
+        self.message_size
+    }
+
     pub fn conf(&self) -> &ExConvCodeConfig {
         &self.conf
     }
 
     pub fn dual_encode<T: GF2ops>(&self, e: &mut [T]) {
+        assert_eq!(self.conf.code_size, e.len(), "e must have len of code_size");
         if self.conf.systematic {
             let (prefix, suffix) = e.split_at_mut(self.message_size);
             self.accumulate(suffix);
@@ -133,9 +142,9 @@ impl ExConvCode {
             }
 
             if ACCUMULATOR_SIZE == 0 {
-                self.acc_one_gen(x, i, mtx_coeffs, false);
+                self.acc_one_gen::<false, _>(x, i, mtx_coeffs);
             } else {
-                self.acc_one::<ACCUMULATOR_SIZE, _>(x, i, mtx_coeffs, false);
+                Self::acc_one::<ACCUMULATOR_SIZE, false, _>(x, i, mtx_coeffs);
             }
             mtx_coeffs = &mtx_coeffs[1..];
             i += 1;
@@ -148,37 +157,36 @@ impl ExConvCode {
             }
 
             if ACCUMULATOR_SIZE == 0 {
-                self.acc_one_gen(x, i, mtx_coeffs, true);
+                self.acc_one_gen::<true, _>(x, i, mtx_coeffs);
             } else {
-                self.acc_one::<ACCUMULATOR_SIZE, _>(x, i, mtx_coeffs, true);
+                Self::acc_one::<ACCUMULATOR_SIZE, true, _>(x, i, mtx_coeffs);
             }
             mtx_coeffs = &mtx_coeffs[1..];
             i += 1;
         }
     }
 
-    fn acc_one_gen<T: GF2ops>(
+    fn acc_one_gen<const RANGE_CHECK: bool, T: GF2ops>(
         &self,
         x: &mut [T],
         i: usize,
         mut matrix_coeffs: &[u8],
-        range_check: bool,
     ) {
         let size = x.len();
         let xi = x[i];
         let mut j = i + 1;
-        if range_check && j >= size {
+        if RANGE_CHECK && j >= size {
             j -= size;
         }
 
         let mut k = 0;
 
         while k + 7 < self.conf.accumulator_size {
-            self.acc_one_8(x, i, j, matrix_coeffs[0], range_check);
+            Self::acc_one_8::<RANGE_CHECK, _>(x, i, j, matrix_coeffs[0]);
             matrix_coeffs = &matrix_coeffs[1..];
 
             j += 8;
-            if range_check && j >= size {
+            if RANGE_CHECK && j >= size {
                 j -= size;
             }
             k += 8;
@@ -197,37 +205,34 @@ impl ExConvCode {
                 k += 1;
                 b >>= 1;
                 j += 1;
-                if range_check && j >= size {
+                if RANGE_CHECK && j >= size {
                     j -= size;
                 }
             }
             k += 1;
         }
 
-        let idx = j;
-        x[idx] ^= xi;
+        *unsafe { x.get_unchecked_mut(j) } ^= xi;
     }
 
-    fn acc_one<const ACCUMULATOR_SIZE: usize, T: GF2ops>(
-        &self,
+    fn acc_one<const ACCUMULATOR_SIZE: usize, const RANGE_CHECK: bool, T: GF2ops>(
         x: &mut [T],
         i: usize,
         mut matrix_coeffs: &[u8],
-        range_check: bool,
     ) {
         let size = x.len();
         let mut j = i + 1;
-        if range_check && j >= size {
+        if RANGE_CHECK && j >= size {
             j -= size;
         }
 
         let mut k = 0;
         while k < ACCUMULATOR_SIZE {
-            self.acc_one_8(x, i, j, matrix_coeffs[0], range_check);
+            Self::acc_one_8::<RANGE_CHECK, _>(x, i, j, matrix_coeffs[0]);
             matrix_coeffs = &matrix_coeffs[1..];
 
             j += 8;
-            if range_check && j >= size {
+            if RANGE_CHECK && j >= size {
                 j -= size;
             }
             k += 8;
@@ -237,18 +242,37 @@ impl ExConvCode {
         x[idx] ^= x[i];
     }
 
-    fn acc_one_8<T: GF2ops>(&self, x: &mut [T], i: usize, j: usize, b: u8, range_check: bool) {
+    #[inline(always)]
+    fn acc_one_8_offsets<const RANGE_CHECK: bool, T: GF2ops>(x: &mut [T], j: usize) -> [usize; 8] {
         let size = x.len();
-        let xi = x[i];
         let mut js = [j, j + 1, j + 2, j + 3, j + 4, j + 5, j + 6, j + 7];
 
-        if range_check {
+        if RANGE_CHECK {
             for j in js.iter_mut() {
                 if *j >= size {
                     *j -= size;
                 }
             }
         }
+        js
+    }
+
+    fn acc_one_8<const RANGE_CHECK: bool, T: GF2ops>(x: &mut [T], i: usize, j: usize, b: u8) {
+        if mem::size_of::<T>() == 16 && mem::align_of::<T>() == 16 {
+            Self::acc_one_8_sse::<RANGE_CHECK>(cast_slice_mut(x), i, j, b);
+        } else {
+            Self::acc_one_8_scalar::<RANGE_CHECK, _>(x, i, j, b);
+        }
+    }
+
+    fn acc_one_8_scalar<const RANGE_CHECK: bool, T: GF2ops>(
+        x: &mut [T],
+        i: usize,
+        j: usize,
+        b: u8,
+    ) {
+        let xi = x[i];
+        let js = Self::acc_one_8_offsets::<RANGE_CHECK, _>(x, j);
 
         let b0 = b & 1;
         let b1 = b & 2;
@@ -284,6 +308,43 @@ impl ExConvCode {
         }
         if b7 != 0 {
             x[js[7]] ^= xi;
+        }
+    }
+
+    #[inline(always)]
+    pub fn acc_one_8_sse<const RANGE_CHECK: bool>(x: &mut [Block], i: usize, j: usize, b: u8) {
+        use std::arch::x86_64::*;
+        let xi = unsafe { *x.get_unchecked_mut(i) };
+        let js = Self::acc_one_8_offsets::<RANGE_CHECK, _>(x, j);
+        let rnd: __m128i = Block::splat(b).into();
+        unsafe {
+            let bshift = [
+                _mm_slli_epi32::<7>(rnd),
+                _mm_slli_epi32::<6>(rnd),
+                _mm_slli_epi32::<5>(rnd),
+                _mm_slli_epi32::<4>(rnd),
+                _mm_slli_epi32::<3>(rnd),
+                _mm_slli_epi32::<2>(rnd),
+                _mm_slli_epi32::<1>(rnd),
+                rnd,
+            ];
+            let xii: __m128 = bytemuck::cast(xi);
+            let zero = _mm_setzero_ps();
+            let mut bb: [__m128; 8] = bytemuck::cast(bshift);
+
+            seq!(N in 0..8 {
+                bb[N] = _mm_blendv_ps(zero, xii, bb[N]);
+            });
+
+            #[cfg(debug_assertions)]
+            for (i, bb) in bb.iter().enumerate() {
+                let exp = if (b >> i & 1) != 0 { xi } else { Block::ZERO };
+                debug_assert_eq!(exp, bytemuck::cast(*bb))
+            }
+
+            seq!(N in 0..8 {
+                *x.get_unchecked_mut(js[N]) ^= bytemuck::cast(bb[N]);
+            });
         }
     }
 }

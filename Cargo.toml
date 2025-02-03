@@ -17,8 +17,11 @@ ndarray = "0.16.1"
 num-traits = "0.2.19"
 rand = "0.8.5"
 rand_core = "0.6.4"
+seec-codes = { path = "seec-codes" }
 seec-core = { path = "seec-core" }
 seec-net = { path = "seec-net" }
+seec-pprf = { path = "seec-pprf" }
+seq-macro = "=0.3.5"
 serde = "1.0.203"
 subtle = "2.6.1"
 thiserror = "2.0.9"

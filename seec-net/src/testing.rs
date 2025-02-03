@@ -69,7 +69,7 @@ pub struct TestCommLayerDataGuard(pub CommLayerData);
 impl Drop for TestCommLayerDataGuard {
     fn drop(&mut self) {
         let comm_data = self.0.comm_data();
-        tracing::info!(?comm_data);
+        tracing::info!("{:#?}", comm_data);
     }
 }
 

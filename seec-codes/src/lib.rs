@@ -1,10 +1,11 @@
 use std::ops::{BitXor, BitXorAssign};
 
+use bytemuck::Pod;
 use seec_core::Block;
 
 pub mod ex_conv;
 
-pub trait GF2ops: BitXor<Output = Self> + BitXorAssign + Copy + Clone + Sized {
+pub trait GF2ops: BitXor<Output = Self> + BitXorAssign + Copy + Clone + Pod + Sized {
     const ZERO: Self;
 }
 

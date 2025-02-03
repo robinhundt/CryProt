@@ -49,11 +49,12 @@ impl ExpanderModd {
         self.refill();
     }
 
+    #[inline(always)]
     pub(crate) fn get(&mut self) -> usize {
         if self.idx == self.vals.len() {
             self.refill();
         }
-        let val = self.vals[self.idx];
+        let val = unsafe { *self.vals.get_unchecked(self.idx) };
         self.idx += 1;
         val as usize
     }

@@ -7,6 +7,7 @@ use subtle::Choice;
 pub mod base;
 pub mod extension;
 pub mod phase;
+pub mod silent_ot;
 
 pub trait RotSender {
     type Error;

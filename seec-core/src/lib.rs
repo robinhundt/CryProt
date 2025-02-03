@@ -21,21 +21,17 @@ pub const AES_PAR_BLOCKS: usize = 21;
 // TODO what should the fallback be?
 pub const AES_PAR_BLOCKS: usize = 4;
 
-#[cfg(test)]
+#[cfg(all(test, not(miri), target_feature = "aes"))]
 mod tests {
-    use std::mem;
-
     use aes::{
         cipher::{
             BlockCipherEncClosure, BlockCipherEncrypt, BlockSizeUser, KeyInit, ParBlocksSizeUser,
         },
         Aes128,
     };
-    use hybrid_array::ArraySize;
 
     use crate::AES_PAR_BLOCKS;
 
-    #[cfg(target_feature = "aes")]
     #[test]
     fn aes_par_block_size() {
         use hybrid_array::typenum::Unsigned;

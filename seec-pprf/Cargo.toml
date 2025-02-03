@@ -13,6 +13,7 @@ seec-core = { workspace = true, features = ["num-traits", "tokio-rayon"] }
 seec-net.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

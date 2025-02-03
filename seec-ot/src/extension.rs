@@ -109,7 +109,7 @@ impl RotSender for OtExtensionSender {
     /// # Panics
     /// - If `count` is not divisable by 128.
     /// - If `count % self.batch_size()` is not divisable by 128.
-    #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(level = Level::DEBUG, skip_all, fields(count = ots.len()))]
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::OT_EXTENSION))]
     async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
@@ -274,7 +274,7 @@ impl RotReceiver for OtExtensionReceiver {
     /// # Panics
     /// - If `choices.len()` is not divisable by 128.
     /// - If `choices.len() % self.batch_size()` is not divisable by 128.
-    #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(level = Level::DEBUG, skip_all, fields(count = ots.len()))]
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::OT_EXTENSION))]
     async fn receive_into(
         &mut self,

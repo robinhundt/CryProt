@@ -1903,6 +1903,7 @@ dependencies = [
  "libote",
  "rand 0.8.5",
  "seec-core",
+ "seq-macro",
 ]
 
 [[package]]
@@ -1959,8 +1960,10 @@ dependencies = [
  "futures",
  "rand 0.8.5",
  "rayon",
+ "seec-codes",
  "seec-core",
  "seec-net",
+ "seec-pprf",
  "subtle",
  "thiserror",
  "tokio",
@@ -1981,6 +1984,7 @@ dependencies = [
  "seec-net",
  "serde",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1988,6 +1992,12 @@ name = "semver"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3cb6eb87a131f756572d7fb904f6e7b68633f09cca868c5df1c4b8d1a694bbba"
+
+[[package]]
+name = "seq-macro"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3f0bf26fd526d2a95683cd0f87bf103b8539e2ca1ef48ce002d67aad59aa0b4"
 
 [[package]]
 name = "serde"

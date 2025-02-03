@@ -3,6 +3,9 @@ edition = "2021"
 name = "seec-codes"
 version = "0.1.0"
 
+[lib]
+bench = false
+
 [dependencies]
 aes = { workspace = true, features = ["hazmat"] }
 bytemuck.workspace = true
@@ -11,6 +14,7 @@ fastdivide.workspace = true
 hybrid-array = { workspace = true }
 rand.workspace = true
 seec-core.workspace = true
+seq-macro.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

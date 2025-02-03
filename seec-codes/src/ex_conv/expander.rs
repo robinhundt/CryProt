@@ -1,8 +1,8 @@
 use seec_core::Block;
-
-use crate::GF2ops;
+use seq_macro::seq;
 
 use super::expander_modd::ExpanderModd;
+use crate::GF2ops;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExpanderCode {
@@ -64,8 +64,10 @@ impl ExpanderCode {
                     for r in &mut rr {
                         *r = reg_gen.get() + j * step;
                     }
-                    for (o, r) in out.iter_mut().zip(rr) {
-                        *o ^= inp[r];
+                    unsafe {
+                        seq!(N in 0..8 {
+                            *out.get_unchecked_mut(N) ^= *inp.get_unchecked(rr[N]) ;
+                        });
                     }
                 }
             }
@@ -75,8 +77,10 @@ impl ExpanderCode {
                 for r in &mut rr {
                     *r = uni_gen.get();
                 }
-                for (o, r) in out.iter_mut().zip(rr) {
-                    *o ^= inp[r];
+                unsafe {
+                    seq!(N in 0..8 {
+                        *out.get_unchecked_mut(N) ^= *inp.get_unchecked(rr[N]) ;
+                    });
                 }
             }
             i += 8;

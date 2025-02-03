@@ -19,20 +19,42 @@ use bytemuck::Zeroable;
 pub struct HugePageMemory<T> {
     ptr: NonNull<T>,
     len: usize,
+    capacity: usize,
 }
 
+pub const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
+
 impl<T> HugePageMemory<T> {
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-}
 
-impl<T> HugePageMemory<T> {
-    pub const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Sets the len of the HugePageMemory.
+    /// # Panic
+    /// Panics if `new_len > self.capacity()`
+    #[inline]
+    pub fn set_len(&mut self, new_len: usize) {
+        assert!(new_len <= self.capacity());
+        // SAFETY:
+        // new_len <= self.capacity
+        // self[len..new_len] is initialized either because of Self::zeroed
+        // or with data written to it.
+        #[allow(unused_unsafe)]
+        unsafe {
+            self.len = new_len;
+        }
+    }
 }
 
 #[cfg(target_family = "unix")]
@@ -41,12 +63,12 @@ impl<T: Zeroable> HugePageMemory<T> {
     /// pages.
     pub fn zeroed(len: usize) -> Self {
         let layout = Self::layout(len);
-        let padded_size = layout.size();
+        let capacity = layout.size();
         let ptr = unsafe {
             // allocate memory using mmap
             let ptr = libc::mmap(
                 ptr::null_mut(),
-                padded_size,
+                capacity,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
                 -1,
@@ -55,8 +77,8 @@ impl<T: Zeroable> HugePageMemory<T> {
             if ptr == libc::MAP_FAILED {
                 handle_alloc_error(layout)
             }
-            // #[cfg(not(miri))]
-            if libc::madvise(ptr, padded_size, libc::MADV_HUGEPAGE) != 0 {
+            #[cfg(not(miri))]
+            if libc::madvise(ptr, capacity, libc::MADV_HUGEPAGE) != 0 {
                 let err = std::io::Error::last_os_error();
                 match err.raw_os_error() {
                     Some(
@@ -64,7 +86,7 @@ impl<T: Zeroable> HugePageMemory<T> {
                         libc::ENOMEM
                         // EINVAL - Invalid arguments (shouldn't happen with our layout)
                         | libc::EINVAL) => {
-                        libc::munmap(ptr, padded_size);
+                        libc::munmap(ptr, capacity);
                         handle_alloc_error(layout);
                     }
                     // Other errors (e.g., EACCES, EAGAIN)
@@ -76,7 +98,7 @@ impl<T: Zeroable> HugePageMemory<T> {
             NonNull::new_unchecked(ptr.cast())
         };
 
-        Self { ptr, len }
+        Self { ptr, len, capacity }
     }
 }
 
@@ -84,7 +106,7 @@ impl<T: Zeroable> HugePageMemory<T> {
 impl<T> HugePageMemory<T> {
     fn layout(len: usize) -> Layout {
         let size = len * mem::size_of::<T>();
-        let align = mem::align_of::<T>().min(Self::HUGE_PAGE_SIZE);
+        let align = mem::align_of::<T>().min(HUGE_PAGE_SIZE);
         let layout = Layout::from_size_align(size, align).expect("alloc too large");
         layout.pad_to_align()
     }
@@ -92,11 +114,10 @@ impl<T> HugePageMemory<T> {
 
 #[cfg(target_family = "unix")]
 impl<T> Drop for HugePageMemory<T> {
+    #[inline]
     fn drop(&mut self) {
-        let layout = Self::layout(self.len);
-        let padded_size = layout.size();
         unsafe {
-            libc::munmap(self.ptr.as_ptr().cast(), padded_size);
+            libc::munmap(self.ptr.as_ptr().cast(), self.capacity);
         }
     }
 }
@@ -122,12 +143,14 @@ impl<T> Drop for HugePageMemory<T> {
 impl<T> Deref for HugePageMemory<T> {
     type Target = [T];
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
 impl<T> DerefMut for HugePageMemory<T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
@@ -138,6 +161,7 @@ impl<T> Default for HugePageMemory<T> {
         Self {
             ptr: NonNull::dangling(),
             len: 0,
+            capacity: 0,
         }
     }
 }
@@ -166,5 +190,31 @@ pub fn allocate_zeroed_vec<T: Zeroable>(len: usize) -> Vec<T> {
         // - allocated size is less than isize::MAX ensured by Layout construction,
         //   otherwise panic
         Vec::from_raw_parts(zeroed as *mut T, len, len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HugePageMemory, HUGE_PAGE_SIZE};
+
+    #[test]
+    fn test_huge_page_memory() {
+        let mut mem = HugePageMemory::<u8>::zeroed(HUGE_PAGE_SIZE + HUGE_PAGE_SIZE / 2);
+        #[cfg(not(miri))] // miri is too slow for this
+        for b in mem.iter() {
+            assert_eq!(0, *b);
+        }
+        assert!(mem[0] == 0);
+        assert!(mem[mem.len() - 1] == 0);
+        mem[42] = 5;
+        mem.set_len(HUGE_PAGE_SIZE);
+        assert_eq!(HUGE_PAGE_SIZE, mem.len());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_len_panics() {
+        let mut mem = HugePageMemory::<u8>::zeroed(HUGE_PAGE_SIZE);
+        mem.set_len(HUGE_PAGE_SIZE + 1);
     }
 }

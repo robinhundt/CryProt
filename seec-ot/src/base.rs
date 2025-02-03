@@ -50,7 +50,7 @@ impl RotSender for SimplestOt {
     type Error = Error;
 
     #[allow(non_snake_case)]
-    #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(level = Level::DEBUG, skip_all, fields(count = ots.len()))]
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
     async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
@@ -97,7 +97,7 @@ impl RotReceiver for SimplestOt {
     type Error = Error;
 
     #[allow(non_snake_case)]
-    #[tracing::instrument(level = Level::DEBUG, skip_all)]
+    #[tracing::instrument(level = Level::DEBUG, skip_all, fields(count = ots.len()))]
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
     async fn receive_into(
         &mut self,

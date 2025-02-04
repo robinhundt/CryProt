@@ -16,9 +16,11 @@ pub trait Buf<T>: Default + Debug + Deref<Target = [T]> + DerefMut + Send + Sync
     /// # Panic
     /// Panics if `len > self.capacity`.
     fn set_len(&mut self, new_len: usize);
+
+    fn grow_zeroed(&mut self, new_size: usize);
 }
 
-impl<T: Zeroable + Default + Debug + Send + Sync + 'static> Buf<T> for Vec<T> {
+impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for Vec<T> {
     fn zeroed(len: usize) -> Self {
         allocate_zeroed_vec(len)
     }
@@ -37,9 +39,13 @@ impl<T: Zeroable + Default + Debug + Send + Sync + 'static> Buf<T> for Vec<T> {
             self.set_len(new_len);
         }
     }
+
+    fn grow_zeroed(&mut self, new_size: usize) {
+        self.resize(new_size, T::zeroed());
+    }
 }
 
-impl<T: Zeroable + Default + Debug + Send + Sync + 'static> Buf<T> for HugePageMemory<T> {
+impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for HugePageMemory<T> {
     fn zeroed(len: usize) -> Self {
         HugePageMemory::zeroed(len)
     }
@@ -50,6 +56,10 @@ impl<T: Zeroable + Default + Debug + Send + Sync + 'static> Buf<T> for HugePageM
 
     fn set_len(&mut self, new_len: usize) {
         self.set_len(new_len);
+    }
+
+    fn grow_zeroed(&mut self, new_size: usize) {
+        self.grow_zeroed(new_size);
     }
 }
 

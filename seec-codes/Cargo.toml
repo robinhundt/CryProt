@@ -3,6 +3,7 @@ edition = "2021"
 name = "seec-codes"
 version = "0.1.0"
 
+
 [lib]
 bench = false
 
@@ -17,8 +18,8 @@ seec-core.workspace = true
 seq-macro.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
 libote = { path = "../../SEEC/libs/libote-rs" }
+criterion.workspace = true
 
 [[bench]]
 harness = false

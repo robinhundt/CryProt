@@ -102,6 +102,71 @@ impl<T: Zeroable> HugePageMemory<T> {
     }
 }
 
+impl<T: Zeroable + Clone> HugePageMemory<T> {
+    /// Grows the HugePageMemory to at least `new_size` zeroed elements.
+    pub fn grow_zeroed(&mut self, new_size: usize) {
+        // If new size fits in current capacity, just update length
+        if new_size <= self.capacity() {
+            self.set_len(new_size);
+            return;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            self.grow_with_mremap(new_size);
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.grow_with_mmap(new_size);
+        }
+    }
+
+    /// Grow implementation using mremap (Linux-specific)
+    #[cfg(target_os = "linux")]
+    fn grow_with_mremap(&mut self, new_size: usize) {
+        // Calculate new layout
+        let new_layout = Self::layout(new_size);
+        let new_capacity = new_layout.size();
+
+        let new_ptr = unsafe {
+            let remapped_ptr = libc::mremap(
+                self.ptr.as_ptr().cast(),
+                self.capacity,
+                new_capacity,
+                libc::MREMAP_MAYMOVE,
+            );
+
+            if remapped_ptr == libc::MAP_FAILED {
+                libc::munmap(self.ptr.as_ptr().cast(), self.capacity);
+                handle_alloc_error(new_layout);
+            }
+
+            // Successfully remapped
+            #[cfg(not(miri))]
+            if libc::madvise(remapped_ptr, new_capacity, libc::MADV_HUGEPAGE) != 0 {
+                let err = std::io::Error::last_os_error();
+                tracing::warn!("Failed to enable huge pages after mremap: {}", err);
+            }
+
+            NonNull::new_unchecked(remapped_ptr.cast())
+        };
+
+        // Update the struct with new pointer, capacity, and length
+        self.ptr = new_ptr;
+        self.capacity = new_capacity;
+        self.set_len(new_size);
+    }
+
+    /// Fallback grow implementation using mmap
+    #[allow(dead_code)]
+    fn grow_with_mmap(&mut self, new_size: usize) {
+        let mut new = Self::zeroed(new_size);
+        new[..self.len()].clone_from_slice(self);
+        *self = new;
+    }
+}
+
 #[cfg(target_family = "unix")]
 impl<T> HugePageMemory<T> {
     fn layout(len: usize) -> Layout {
@@ -216,5 +281,17 @@ mod tests {
     fn test_set_len_panics() {
         let mut mem = HugePageMemory::<u8>::zeroed(HUGE_PAGE_SIZE);
         mem.set_len(HUGE_PAGE_SIZE + 1);
+    }
+
+    #[test]
+    fn test_grow() {
+        let mut mem = HugePageMemory::<u8>::zeroed(HUGE_PAGE_SIZE);
+        assert_eq!(0, mem[0]);
+        mem[0] = 1;
+        mem.grow_zeroed(2 * HUGE_PAGE_SIZE);
+        assert_eq!(2 * HUGE_PAGE_SIZE, mem.len());
+        assert_eq!(2 * HUGE_PAGE_SIZE, mem.capacity());
+        assert_eq!(1, mem[0]);
+        assert_eq!(0, mem[HUGE_PAGE_SIZE + 1]);
     }
 }

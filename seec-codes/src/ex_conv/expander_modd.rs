@@ -54,6 +54,8 @@ impl ExpanderModd {
         if self.idx == self.vals.len() {
             self.refill();
         }
+        // SAFETY: self.idx is always < self.vals.len(). If self.idx == self.vals.len(),
+        // it is set to to 0 in self.refill()
         let val = unsafe { *self.vals.get_unchecked(self.idx) };
         self.idx += 1;
         val as usize
@@ -78,7 +80,6 @@ impl ExpanderModd {
         }
     }
 
-    // No SIMD version of doMod32
     #[inline]
     fn do_mod32(vals: &mut [u64], divider: &DividerU64, mod_val: u64) {
         for val in vals {

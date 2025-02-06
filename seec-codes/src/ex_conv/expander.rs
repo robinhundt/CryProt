@@ -34,31 +34,23 @@ impl ExpanderCode {
         }
     }
 
-    pub(crate) fn expand<const ADD: bool, T: GF2ops>(&self, inp: &[T], mut out: &mut [T]) {
-        let main = self.message_size / 8 * 8;
-        let mut i = 0;
-        let mut reg = 0;
+    pub(crate) fn expand<T: GF2ops>(&self, inp: &[T], out: &mut [T]) {
         let mut uni = self.expander_weight;
-        let mut step = 0;
         let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
         let mut reg_gen = if self.regular {
             uni = self.expander_weight / 2;
-            reg = self.expander_weight - uni;
-            step = self.code_size / reg;
-            Some(ExpanderModd::new(
-                self.seed ^ Block::from([23421341, 342342134]),
-                step as u64,
-            ))
+            let reg = self.expander_weight - uni;
+            let step = self.code_size / reg;
+            let reg_gen =
+                ExpanderModd::new(self.seed ^ Block::from([23421341, 342342134]), step as u64);
+            Some((reg_gen, reg, step))
         } else {
             None
         };
 
-        if !ADD {
-            out.fill(T::ZERO);
-        }
-
-        while i < main {
-            if let Some(reg_gen) = &mut reg_gen {
+        let mut chunk_iter = out.chunks_exact_mut(8);
+        for out_chunk in chunk_iter.by_ref() {
+            if let Some((ref mut reg_gen, reg, step)) = reg_gen {
                 for j in 0..reg {
                     let mut rr = [0; 8];
                     for r in &mut rr {
@@ -66,7 +58,7 @@ impl ExpanderCode {
                     }
                     unsafe {
                         seq!(N in 0..8 {
-                            *out.get_unchecked_mut(N) ^= *inp.get_unchecked(rr[N]) ;
+                            *out_chunk.get_unchecked_mut(N) ^= *inp.get_unchecked(rr[N]) ;
                         });
                     }
                 }
@@ -79,30 +71,54 @@ impl ExpanderCode {
                 }
                 unsafe {
                     seq!(N in 0..8 {
-                        *out.get_unchecked_mut(N) ^= *inp.get_unchecked(rr[N]) ;
+                        *out_chunk.get_unchecked_mut(N) ^= *inp.get_unchecked(rr[N]) ;
                     });
                 }
             }
-            i += 8;
-            out = &mut out[8..];
         }
 
-        while i < self.message_size {
-            if let Some(reg_gen) = &mut reg_gen {
+        for out in chunk_iter.into_remainder() {
+            if let Some((ref mut reg_gen, reg, step)) = reg_gen {
                 for j in 0..reg {
-                    out[0] ^= inp[reg_gen.get() + j * step];
+                    *out ^= inp[reg_gen.get() + j * step];
                 }
             }
 
             for _j in 0..uni {
-                out[0] ^= inp[uni_gen.get()];
+                *out ^= inp[uni_gen.get()];
             }
-
-            i += 1;
-            out = &mut out[1..];
         }
     }
-}
+
+    pub(crate) fn expand_simple<T: GF2ops>(&self, inp: &[T], out: &mut [T]) {
+        let mut uni = self.expander_weight;
+        let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
+        let mut reg_gen = if self.regular {
+            uni = self.expander_weight / 2;
+            let reg = self.expander_weight - uni;
+            let step = self.code_size / reg;
+            let reg_gen =
+                ExpanderModd::new(self.seed ^ Block::from([23421341, 342342134]), step as u64);
+            Some((reg_gen, reg, step))
+        } else {
+            None
+        };
+    
+        for out in out.iter_mut() {
+            if let Some((ref mut reg_gen, reg, step)) = reg_gen {
+                for j in 0..reg {
+                    *out ^= inp[reg_gen.get() + j * step];
+                }
+            }
+    
+            for _ in 0..uni {
+                *out ^= inp[uni_gen.get()];
+            }
+        }
+    }
+
+}    
+
 
 #[cfg(test)]
 mod tests {
@@ -125,7 +141,7 @@ mod tests {
 
         let mut output = vec![Block::ZERO; 16];
 
-        code.expand::<false, _>(&input, &mut output);
+        code.expand(&input, &mut output);
 
         assert_ne!(input, output);
         assert!(
@@ -144,31 +160,9 @@ mod tests {
         StdRng::seed_from_u64(2342).fill_bytes(cast_slice_mut(&mut input));
         let mut output = vec![Block::ZERO; 8];
 
-        code.expand::<false, _>(&input, &mut output);
+        code.expand(&input, &mut output);
 
         assert_ne!(input, output);
-        assert!(
-            output.iter().all(|&x| x != Block::ZERO),
-            "Output should not contain non-zero elements"
-        );
-    }
-
-    #[test]
-    fn test_additive_expansion() {
-        // Test case 3: Testing additive expansion (ADD = true)
-        let seed = Block::from([333333333, 444444444]);
-        let code = ExpanderCode::new(32, 64, 6, true, seed);
-
-        let mut input = vec![Block::ZERO; 64];
-        StdRng::seed_from_u64(2342).fill_bytes(cast_slice_mut(&mut input));
-
-        let mut output = vec![Block::from([2, 2]); 32]; // Pre-filled output
-        let original_output = output.clone();
-
-        code.expand::<true, _>(&input, &mut output);
-
-        assert_ne!(input, output);
-        assert_ne!(original_output, output);
         assert!(
             output.iter().all(|&x| x != Block::ZERO),
             "Output should not contain non-zero elements"

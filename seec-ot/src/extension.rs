@@ -21,7 +21,7 @@ use tracing::Level;
 
 use crate::{
     base::{self, SimplestOt},
-    phase, random_choices, RotReceiver, RotSender,
+    phase, random_choices, Connected, RotReceiver, RotSender,
 };
 
 pub const BASE_OT_COUNT: usize = 128;
@@ -98,6 +98,12 @@ impl OtExtensionSender {
         self.delta = Some(Block::from_choices(&base_choices));
         self.base_choices = base_choices;
         Ok(())
+    }
+}
+
+impl Connected for OtExtensionSender {
+    fn connection(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 }
 
@@ -263,6 +269,12 @@ impl OtExtensionReceiver {
             .map(|[s1, s2]| [AesRng::from_seed(s1), AesRng::from_seed(s2)])
             .collect();
         Ok(())
+    }
+}
+
+impl Connected for OtExtensionReceiver {
+    fn connection(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 }
 

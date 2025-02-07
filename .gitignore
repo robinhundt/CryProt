@@ -1,4 +1,5 @@
 target
 profile.json
+perf.data*
 
 .flyio

@@ -12,7 +12,7 @@ use seec_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
-use crate::{phase, RotReceiver, RotSender};
+use crate::{phase, Connected, RotReceiver, RotSender};
 
 pub struct SimplestOt {
     rng: StdRng,
@@ -29,6 +29,12 @@ impl SimplestOt {
             conn: connection,
             rng,
         }
+    }
+}
+
+impl Connected for SimplestOt {
+    fn connection(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 }
 

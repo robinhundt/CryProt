@@ -2,23 +2,26 @@ use std::future::Future;
 
 use rand::{distributions, prelude::Distribution, rngs::StdRng, CryptoRng, Rng, SeedableRng};
 use seec_core::{buf::Buf, Block};
+use seec_net::Connection;
 use subtle::Choice;
 
+pub mod adapter;
 pub mod base;
 pub mod extension;
 pub mod phase;
 pub mod silent_ot;
 
-pub trait RotSender {
+pub trait Connected {
+    fn connection(&mut self) -> &mut Connection;
+}
+
+pub trait RotSender: Connected + Send {
     type Error;
 
     fn send(
         &mut self,
         count: usize,
-    ) -> impl Future<Output = Result<Vec<[Block; 2]>, Self::Error>> + Send
-    where
-        Self: Send,
-    {
+    ) -> impl Future<Output = Result<Vec<[Block; 2]>, Self::Error>> + Send {
         async move {
             let mut ots = Vec::zeroed(count);
             self.send_into(&mut ots).await?;
@@ -37,7 +40,7 @@ pub trait RotSender {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-pub trait RotReceiver {
+pub trait RotReceiver: Connected + Send {
     type Error;
 
     fn receive_into(
@@ -49,10 +52,7 @@ pub trait RotReceiver {
     fn receive(
         &mut self,
         choices: &[Choice],
-    ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send
-    where
-        Self: Send,
-    {
+    ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send {
         async {
             let mut ots = Vec::zeroed(choices.len());
             self.receive_into(choices, &mut ots).await?;
@@ -61,8 +61,11 @@ pub trait RotReceiver {
     }
 }
 
+/// Marker trait for R-OT Senders that are paired with a random choice receiver.
+pub trait RandChoiceRotSender {}
+
 /// Returns a random choice vector alongside OTs.
-pub trait RandChoiceRotReceiver {
+pub trait RandChoiceRotReceiver: Connected + Send {
     type Error;
 
     fn rand_choice_receive_into(
@@ -73,10 +76,7 @@ pub trait RandChoiceRotReceiver {
     fn rand_choice_receive(
         &mut self,
         count: usize,
-    ) -> impl Future<Output = Result<(Vec<Block>, Vec<Choice>), Self::Error>> + Send
-    where
-        Self: Send,
-    {
+    ) -> impl Future<Output = Result<(Vec<Block>, Vec<Choice>), Self::Error>> + Send {
         async move {
             let mut ots = Vec::zeroed(count);
             let choices = self.rand_choice_receive_into(&mut ots).await?;
@@ -85,18 +85,16 @@ pub trait RandChoiceRotReceiver {
     }
 }
 
-impl<R: RotReceiver + Send> RandChoiceRotReceiver for R {
+impl<R: RotReceiver> RandChoiceRotReceiver for R {
     type Error = R::Error;
 
-    fn rand_choice_receive_into(
+    async fn rand_choice_receive_into(
         &mut self,
         ots: &mut impl Buf<Block>,
-    ) -> impl Future<Output = Result<Vec<Choice>, Self::Error>> + Send {
-        async {
-            let choices = random_choices(ots.len(), &mut StdRng::from_entropy());
-            self.receive_into(&choices, ots).await?;
-            Ok(choices)
-        }
+    ) -> Result<Vec<Choice>, Self::Error> {
+        let choices = random_choices(ots.len(), &mut StdRng::from_entropy());
+        self.receive_into(&choices, ots).await?;
+        Ok(choices)
     }
 }
 

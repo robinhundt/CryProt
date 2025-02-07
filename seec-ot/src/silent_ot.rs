@@ -14,8 +14,7 @@ use subtle::Choice;
 use tracing::Level;
 
 use crate::{
-    extension::{OtExtensionReceiver, OtExtensionSender},
-    RandChoiceRotReceiver, RotReceiver, RotSender,
+    extension::{OtExtensionReceiver, OtExtensionSender}, Connected, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver, RotSender
 };
 
 pub const SECURITY_PARAMETER: usize = 128;
@@ -244,12 +243,26 @@ impl SilentOtReceiver {
     }
 }
 
+impl Connected for SilentOtSender {
+    fn connection(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
+}
+
+impl RandChoiceRotSender for SilentOtSender {}
+
 impl RotSender for SilentOtSender {
     type Error = ();
 
     async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
         self.random_sent_into(ots.len(), ots).await;
         Ok(())
+    }
+}
+
+impl Connected for SilentOtReceiver {
+    fn connection(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 }
 

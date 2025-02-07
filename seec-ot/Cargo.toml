@@ -8,7 +8,7 @@ version = "0.1.0"
 bench = false
 
 [dependencies]
-bitvec.workspace = true
+bitvec = { workspace = true, features = ["serde"] }
 bytemuck.workspace = true
 curve25519-dalek = { version = "4.1.3", features = ["rand_core", "serde"] }
 futures.workspace = true

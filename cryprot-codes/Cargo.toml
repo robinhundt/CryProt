@@ -1,0 +1,26 @@
+[package]
+edition = "2021"
+name = "cryprot-codes"
+version = "0.1.0"
+
+
+[lib]
+bench = false
+
+[dependencies]
+aes = { workspace = true, features = ["hazmat"] }
+bytemuck.workspace = true
+cpufeatures.workspace = true
+cryprot-core.workspace = true
+fastdivide.workspace = true
+hybrid-array = { workspace = true }
+rand.workspace = true
+seq-macro.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+libote = { path = "../../SEEC/libs/libote-rs" }
+
+[[bench]]
+harness = false
+name = "bench"

@@ -1,5 +1,11 @@
 [workspace]
-members = ["seec-codes", "seec-core", "seec-net", "seec-ot", "seec-pprf"]
+members = [
+    "cryprot-codes",
+    "cryprot-core",
+    "cryprot-net",
+    "cryprot-ot",
+    "cryprot-pprf",
+]
 resolver = "2"
 
 [workspace.dependencies]
@@ -9,6 +15,10 @@ bitvec = "1.0.1"
 bytemuck = "1.21.0"
 cpufeatures = "0.2.17"
 criterion = { version = "0.4", features = ["async_tokio", "html_reports"] }
+cryprot-codes = { path = "cryprot-codes" }
+cryprot-core = { path = "cryprot-core" }
+cryprot-net = { path = "cryprot-net" }
+cryprot-pprf = { path = "cryprot-pprf" }
 fastdivide = "0.4.2"
 futures = "0.3.30"
 hybrid-array = { version = "0.2.3", features = ["bytemuck"] }
@@ -17,10 +27,6 @@ ndarray = "0.16.1"
 num-traits = "0.2.19"
 rand = "0.8.5"
 rand_core = "0.6.4"
-seec-codes = { path = "seec-codes" }
-seec-core = { path = "seec-core" }
-seec-net = { path = "seec-net" }
-seec-pprf = { path = "seec-pprf" }
 seq-macro = "=0.3.5"
 serde = "1.0.203"
 subtle = "2.6.1"

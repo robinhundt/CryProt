@@ -1984,6 +1984,7 @@ dependencies = [
  "seec-core",
  "seec-net",
  "serde",
+ "thiserror",
  "tokio",
  "tracing",
 ]

@@ -14,7 +14,8 @@ use subtle::Choice;
 use tracing::Level;
 
 use crate::{
-    extension::{OtExtensionReceiver, OtExtensionSender}, Connected, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver, RotSender
+    extension::{self, OtExtensionReceiver, OtExtensionSender},
+    Connected, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver, RotSender,
 };
 
 pub const SECURITY_PARAMETER: usize = 128;
@@ -40,6 +41,14 @@ pub enum ChoiceBitPacking {
     NotPacked,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("unable to perform base OTs for silent OTs")]
+    BaseOt(#[from] extension::Error),
+    #[error("error in pprf expansion for silent OTs")]
+    Pprf(#[from] seec_pprf::Error),
+}
+
 impl SilentOtSender {
     pub fn new(mut conn: Connection) -> Self {
         let ot_sender = OtExtensionSender::new(conn.sub_connection());
@@ -57,17 +66,21 @@ impl SilentOtSender {
         pprf_conf.size()
     }
 
-    pub async fn random_send(&mut self, count: usize) -> impl Buf<[Block; 2]> {
+    pub async fn random_send(&mut self, count: usize) -> Result<impl Buf<[Block; 2]>, Error> {
         let mut ots = HugePageMemory::zeroed(count);
-        self.random_sent_into(count, &mut ots).await;
-        ots
+        self.random_sent_into(count, &mut ots).await?;
+        Ok(ots)
     }
 
-    pub async fn random_sent_into(&mut self, count: usize, ots: &mut impl Buf<[Block; 2]>) {
+    pub async fn random_sent_into(
+        &mut self,
+        count: usize,
+        ots: &mut impl Buf<[Block; 2]>,
+    ) -> Result<(), Error> {
         assert_eq!(count, ots.len());
         let delta = self.rng.gen();
         let mut ots_buf = mem::take(ots);
-        let correlated = self.correlated_send(count, delta).await;
+        let correlated = self.correlated_send(count, delta).await?;
 
         let ots_buf = spawn_compute(move || {
             let masked_delta = delta & Block::MASK_LSB;
@@ -85,13 +98,18 @@ impl SilentOtSender {
         })
         .await;
         *ots = ots_buf;
+        Ok(())
     }
 
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_send"))]
-    pub async fn correlated_send(&mut self, count: usize, delta: Block) -> impl Buf<Block> {
+    pub async fn correlated_send(
+        &mut self,
+        count: usize,
+        delta: Block,
+    ) -> Result<impl Buf<Block>, Error> {
         let mut ots = HugePageMemory::zeroed(Self::ots_buf_size(count));
-        self.correlated_send_into(count, delta, &mut ots).await;
-        ots
+        self.correlated_send_into(count, delta, &mut ots).await?;
+        Ok(ots)
     }
 
     pub async fn correlated_send_into(
@@ -99,7 +117,7 @@ impl SilentOtSender {
         count: usize,
         delta: Block,
         ots: &mut impl Buf<Block>,
-    ) {
+    ) -> Result<(), Error> {
         let mult_type = MultType::default();
         let conf = Config::configure(count, mult_type);
         let pprf_conf = PprfConfig::from(conf);
@@ -111,8 +129,7 @@ impl SilentOtSender {
         let mut base_ots = self
             .ot_sender
             .send(pprf_conf.base_ot_count().next_multiple_of(128))
-            .await
-            .unwrap();
+            .await?;
         base_ots.truncate(pprf_conf.base_ot_count());
 
         let pprf_sender =
@@ -120,10 +137,11 @@ impl SilentOtSender {
         let mut B = mem::take(ots);
         pprf_sender
             .expand(delta, self.rng.gen(), conf.pprf_out_fmt(), &mut B)
-            .await;
+            .await?;
 
         let enc = Encoder::new(count, mult_type);
         *ots = enc.send_compress(B).await;
+        Ok(())
     }
 }
 
@@ -150,19 +168,22 @@ impl SilentOtReceiver {
         pprf_conf.size()
     }
 
-    pub async fn random_receive(&mut self, count: usize) -> (impl Buf<Block>, Vec<Choice>) {
+    pub async fn random_receive(
+        &mut self,
+        count: usize,
+    ) -> Result<(impl Buf<Block>, Vec<Choice>), Error> {
         let mut ots = HugePageMemory::zeroed(Self::ots_buf_size(count));
-        let choices = self.random_receive_into(count, &mut ots).await;
-        (ots, choices)
+        let choices = self.random_receive_into(count, &mut ots).await?;
+        Ok((ots, choices))
     }
 
     pub async fn random_receive_into(
         &mut self,
         count: usize,
         ots: &mut impl Buf<Block>,
-    ) -> Vec<Choice> {
+    ) -> Result<Vec<Choice>, Error> {
         self.correlated_receive_into(count, ChoiceBitPacking::Packed, ots)
-            .await;
+            .await?;
 
         let mut ots_buf = mem::take(ots);
         let (ots_buf, choices) = spawn_compute(move || {
@@ -180,7 +201,7 @@ impl SilentOtReceiver {
         })
         .await;
         *ots = ots_buf;
-        choices
+        Ok(choices)
     }
 
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_receive"))]
@@ -188,12 +209,12 @@ impl SilentOtReceiver {
         &mut self,
         count: usize,
         cb_packing: ChoiceBitPacking,
-    ) -> (impl Buf<Block>, Option<Vec<Choice>>) {
+    ) -> Result<(impl Buf<Block>, Option<Vec<Choice>>), Error> {
         let mut ots = HugePageMemory::zeroed(Self::ots_buf_size(count));
         let choices = self
             .correlated_receive_into(count, cb_packing, &mut ots)
-            .await;
-        (ots, choices)
+            .await?;
+        Ok((ots, choices))
     }
 
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_receive"))]
@@ -202,7 +223,7 @@ impl SilentOtReceiver {
         count: usize,
         cb_packing: ChoiceBitPacking,
         ots: &mut impl Buf<Block>,
-    ) -> Option<Vec<Choice>> {
+    ) -> Result<Option<Vec<Choice>>, Error> {
         let mult_type = MultType::default();
         let conf = Config::configure(count, mult_type);
         let pprf_conf = PprfConfig::from(conf);
@@ -219,11 +240,7 @@ impl SilentOtReceiver {
             Choice::from(0),
         );
 
-        let mut base_ots = self
-            .ot_receiver
-            .receive(&base_choices_subtle)
-            .await
-            .unwrap();
+        let mut base_ots = self.ot_receiver.receive(&base_choices_subtle).await?;
         base_ots.truncate(pprf_conf.base_ot_count());
 
         let pprf_receiver = RegularPprfReceiver::new_with_conf(
@@ -234,12 +251,12 @@ impl SilentOtReceiver {
         );
         let noisy_points = pprf_receiver.get_points(conf.pprf_out_fmt());
         let mut A = mem::take(ots);
-        pprf_receiver.expand(conf.pprf_out_fmt(), &mut A).await;
+        pprf_receiver.expand(conf.pprf_out_fmt(), &mut A).await?;
 
         let enc = Encoder::new(count, mult_type);
         let (A, choices) = enc.receive_compress(A, noisy_points, cb_packing).await;
         *ots = A;
-        choices
+        Ok(choices)
     }
 }
 
@@ -252,10 +269,10 @@ impl Connected for SilentOtSender {
 impl RandChoiceRotSender for SilentOtSender {}
 
 impl RotSender for SilentOtSender {
-    type Error = ();
+    type Error = Error;
 
     async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
-        self.random_sent_into(ots.len(), ots).await;
+        self.random_sent_into(ots.len(), ots).await?;
         Ok(())
     }
 }
@@ -267,7 +284,7 @@ impl Connected for SilentOtReceiver {
 }
 
 impl RandChoiceRotReceiver for SilentOtReceiver {
-    type Error = ();
+    type Error = Error;
 
     async fn rand_choice_receive_into(
         &mut self,
@@ -275,7 +292,7 @@ impl RandChoiceRotReceiver for SilentOtReceiver {
     ) -> Result<Vec<Choice>, Self::Error> {
         let count = ots.len();
         ots.grow_zeroed(Self::ots_buf_size(count));
-        let choices = self.random_receive_into(count, ots).await;
+        let choices = self.random_receive_into(count, ots).await?;
         Ok(choices)
     }
 }
@@ -469,10 +486,11 @@ mod tests {
         let delta = Block::ONES;
         let count = 2_usize.pow(11);
 
-        let (s_ot, (r_ot, choices)) = tokio::join!(
+        let (s_ot, (r_ot, choices)) = tokio::try_join!(
             sender.correlated_send(count, delta),
             receiver.correlated_receive(count, ChoiceBitPacking::Packed)
-        );
+        )
+        .unwrap();
 
         assert_eq!(s_ot.len(), count);
         assert_eq!(r_ot.len(), count);
@@ -490,7 +508,7 @@ mod tests {
         let count = 2_usize.pow(11);
 
         let (s_ot, (r_ot, choices)) =
-            tokio::join!(sender.random_send(count), receiver.random_receive(count));
+            tokio::try_join!(sender.random_send(count), receiver.random_receive(count)).unwrap();
 
         check_random(count, &s_ot, &r_ot[..], &choices);
     }
@@ -523,10 +541,10 @@ mod tests {
         let delta = Block::ONES;
         let count = 2_usize.pow(18);
 
-        let (s_ot, (r_ot, choices)) = tokio::join!(
+        let (s_ot, (r_ot, choices)) = tokio::try_join!(
             sender.correlated_send(count, delta),
             receiver.correlated_receive(count, ChoiceBitPacking::Packed)
-        );
+        ).unwrap();
 
         assert_eq!(s_ot.len(), count);
 

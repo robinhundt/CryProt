@@ -1,5 +1,5 @@
 //! # Distributed Puncturable Pseudorandom Function (PPRF) Implementation
-use std::{array, cmp::Ordering, mem};
+use std::{array, cmp::Ordering, io, mem};
 
 use aes::{
     cipher::{BlockCipherEncrypt, KeyInit},
@@ -10,10 +10,15 @@ use futures::{SinkExt, StreamExt};
 use ndarray::Array2;
 use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
 use seec_core::{
-    aes_hash::FIXED_KEY_HASH, aes_rng::AesRng, alloc::allocate_zeroed_vec, buf::Buf,
-    tokio_rayon::spawn_compute, utils::{log2_ceil, xor_inplace}, Block, AES_PAR_BLOCKS,
+    aes_hash::FIXED_KEY_HASH,
+    aes_rng::AesRng,
+    alloc::allocate_zeroed_vec,
+    buf::Buf,
+    tokio_rayon::spawn_compute,
+    utils::{log2_ceil, xor_inplace},
+    Block, AES_PAR_BLOCKS,
 };
-use seec_net::Connection;
+use seec_net::{Connection, ConnectionError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::Level;
@@ -38,6 +43,16 @@ pub enum OutFormat {
     Interleaved,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("unable to establish sub-stream to pprf peer")]
+    Connection(#[from] ConnectionError),
+    #[error("error in sending data to pprf peer")]
+    Send(#[source] io::Error),
+    #[error("error in receiving data from pprf peer")]
+    Receive(#[source] io::Error),
+}
+
 pub const PARALLEL_TREES: usize = AES_PAR_BLOCKS;
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
@@ -48,8 +63,16 @@ pub struct TreeGrp {
 }
 
 impl RegularPprfSender {
+    /// Create a new `RegularPprfSender`.
+    ///
+    /// # Panics
+    /// If `base_ots.len() != conf.base_ot_count()`.
     pub fn new_with_conf(conn: Connection, conf: PprfConfig, base_ots: Vec<[Block; 2]>) -> Self {
-        assert_eq!(conf.base_ot_count(), base_ots.len());
+        assert_eq!(
+            conf.base_ot_count(),
+            base_ots.len(),
+            "wrong number of base OTs"
+        );
         let base_ots = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], base_ots)
             .expect("base_ots.len() is checked before");
         Self {
@@ -59,6 +82,11 @@ impl RegularPprfSender {
         }
     }
 
+    /// Expand the PPRF into out.
+    ///
+    /// Note that this method temporarily moves out the buffer pointed to by
+    /// `out`. If the future returned by `expand` is dropped or panics, out
+    /// might point to a different buffer.
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "PprfExpand"))]
     pub async fn expand(
         mut self,
@@ -66,12 +94,15 @@ impl RegularPprfSender {
         seed: Block,
         out_fmt: OutFormat,
         out: &mut impl Buf<Block>,
-    ) {
-        assert_eq!(self.conf.size(), out.len());
+    ) -> Result<(), Error> {
+        let size = self.conf.size();
         let mut output = mem::take(out);
-        let (mut tx, _) = self.conn.stream().await.unwrap();
+        let (mut tx, _) = self.conn.stream().await?;
         let (send, mut recv) = unbounded_channel();
         let jh = spawn_compute(move || {
+            if output.len() < size {
+                output.grow_zeroed(size);
+            }
             let aes = create_fixed_aes();
             let depth = self.conf.depth();
             let pnt_count = self.conf.pnt_count();
@@ -83,8 +114,7 @@ impl RegularPprfSender {
                 _ => depth + 1,
             };
 
-            let mut tree: Vec<[Block; PARALLEL_TREES]> =
-                allocate_zeroed_vec(2_usize.pow(dd as u32));
+            let mut tree: Vec<[Block; PARALLEL_TREES]> = Vec::zeroed(2_usize.pow(dd as u32));
 
             for g in (0..pnt_count).step_by(PARALLEL_TREES) {
                 let mut tree_grp = TreeGrp {
@@ -154,7 +184,11 @@ impl RegularPprfSender {
                 tree_grp.sums[0].truncate(depth - 1);
                 tree_grp.sums[1].truncate(depth - 1);
 
-                send.send(tree_grp).unwrap();
+                if send.send(tree_grp).is_err() {
+                    // receiver in async task is dropped, so we stop compute task by returning.
+                    // output will be dropped and not put back into initial &mut out parameter
+                    return output;
+                }
                 if out_fmt != OutFormat::Interleaved {
                     let last_lvl = get_level(&mut tree, depth);
                     copy_out(last_lvl, &mut output, g, out_fmt, self.conf);
@@ -164,22 +198,37 @@ impl RegularPprfSender {
         });
 
         while let Some(tree_group) = recv.recv().await {
-            tx.send(tree_group).await.unwrap();
+            tx.send(tree_group).await.map_err(Error::Send)?;
         }
 
         *out = jh.await;
+        Ok(())
     }
 }
 
 impl RegularPprfReceiver {
+    /// Create a new `RegularPprfReceiver`.
+    ///
+    /// # Panics
+    /// If:
+    /// - `base_ots.len() != conf.base_ot_count()` or
+    /// - `base_choices.len() != conf.base_ot_count()` or
     pub fn new_with_conf(
         conn: Connection,
         conf: PprfConfig,
         base_ots: Vec<Block>,
         base_choices: Vec<u8>,
     ) -> Self {
-        assert_eq!(conf.base_ot_count(), base_ots.len());
-        assert_eq!(conf.base_ot_count(), base_choices.len());
+        assert_eq!(
+            conf.base_ot_count(),
+            base_ots.len(),
+            "wrong number of base OTs"
+        );
+        assert_eq!(
+            conf.base_ot_count(),
+            base_choices.len(),
+            "wrong number of base choices"
+        );
         let base_ots = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], base_ots)
             .expect("base_ots.len() is checked before");
         let base_choices = Array2::from_shape_vec([conf.pnt_count(), conf.depth()], base_choices)
@@ -192,13 +241,25 @@ impl RegularPprfReceiver {
         }
     }
 
+    /// Expand the PPRF into out.
+    ///
+    /// Note that this method temporarily moves out the buffer pointed to by
+    /// `out`. If the future returned by `expand` is dropped or panics, out
+    /// might point to a different buffer.
     #[tracing::instrument(target = "seec_metrics", level = Level::TRACE, skip_all, fields(phase = "PprfExpand"))]
-    pub async fn expand(mut self, out_fmt: OutFormat, out: &mut impl Buf<Block>) {
-        assert_eq!(self.conf.size(), out.len());
+    pub async fn expand(
+        mut self,
+        out_fmt: OutFormat,
+        out: &mut impl Buf<Block>,
+    ) -> Result<(), Error> {
+        let size = self.conf.size();
         let mut output = mem::take(out);
         let (_, mut rx) = self.conn.stream().await.unwrap();
         let (send, recv) = std::sync::mpsc::channel();
         let jh = spawn_compute(move || {
+            if output.len() < size {
+                output.grow_zeroed(size);
+            }
             let aes = create_fixed_aes();
             let points = self.get_points(OutFormat::ByLeafIndex);
             let depth = self.conf.depth();
@@ -307,11 +368,15 @@ impl RegularPprfReceiver {
         });
 
         while let Some(tree_grp) = rx.next().await {
-            let tree_grp = tree_grp.unwrap();
-            send.send(tree_grp).unwrap();
+            let tree_grp = tree_grp.map_err(Error::Receive)?;
+            if let Err(_) = send.send(tree_grp) {
+                // panic in the worker thread, so we break from receiving more data
+                break;
+            }
         }
 
         *out = jh.await;
+        Ok(())
     }
 
     pub fn get_points(&self, out_fmt: OutFormat) -> Vec<usize> {
@@ -566,10 +631,11 @@ mod tests {
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
         let seed = rng.gen();
-        tokio::join!(
+        tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
-        );
+        )
+        .unwrap();
 
         xor_inplace(&mut s_out, &r_out);
 
@@ -610,10 +676,11 @@ mod tests {
         let mut s_out = Vec::zeroed(conf.size());
         let mut r_out = Vec::zeroed(conf.size());
         let seed = rng.gen();
-        tokio::join!(
+        tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
-        );
+        )
+        .unwrap();
 
         xor_inplace(&mut s_out, &r_out);
         println!("XORed output: {:?}", s_out);
@@ -640,10 +707,11 @@ mod tests {
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
         let seed = rng.gen();
-        tokio::join!(
+        tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
-        );
+        )
+        .unwrap();
 
         xor_inplace(&mut s_out, &r_out);
         for (i, blk) in s_out.iter().enumerate() {

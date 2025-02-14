@@ -2,7 +2,6 @@
 use std::mem;
 
 use bytemuck::cast_slice_mut;
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use cryprot_codes::ex_conv::{ExConvCode, ExConvCodeConfig};
 use cryprot_core::{
     aes_hash::FIXED_KEY_HASH, alloc::HugePageMemory, buf::Buf, tokio_rayon::spawn_compute, Block,
@@ -10,12 +9,14 @@ use cryprot_core::{
 };
 use cryprot_net::Connection;
 use cryprot_pprf::{PprfConfig, RegularPprfReceiver, RegularPprfSender};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use subtle::Choice;
 use tracing::Level;
 
 use crate::{
     extension::{self, OtExtensionReceiver, OtExtensionSender},
     Connected, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver, RotSender,
+    SemiHonestMarker,
 };
 
 pub const SECURITY_PARAMETER: usize = 128;
@@ -23,7 +24,7 @@ const SCALER: usize = 2;
 
 pub struct SilentOtSender {
     conn: Connection,
-    ot_sender: OtExtensionSender,
+    ot_sender: OtExtensionSender<SemiHonestMarker>,
     rng: StdRng,
 }
 
@@ -148,7 +149,7 @@ impl SilentOtSender {
 
 pub struct SilentOtReceiver {
     conn: Connection,
-    ot_receiver: OtExtensionReceiver,
+    ot_receiver: OtExtensionReceiver<SemiHonestMarker>,
     rng: StdRng,
 }
 
@@ -548,7 +549,8 @@ mod tests {
         let (s_ot, (r_ot, choices)) = tokio::try_join!(
             sender.correlated_send(count, delta),
             receiver.correlated_receive(count, ChoiceBitPacking::Packed)
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(s_ot.len(), count);
 

@@ -251,7 +251,7 @@ impl ExConvCode {
 
         #[cfg(debug_assertions)]
         for (i, bb) in bb.iter().enumerate() {
-            let exp = if (b >> i & 1) != 0 { xi } else { Block::ZERO };
+            let exp = if ((b >> i) & 1) != 0 { xi } else { Block::ZERO };
             debug_assert_eq!(exp, bytemuck::cast(*bb))
         }
 
@@ -265,9 +265,11 @@ impl ExConvCode {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "libote-compat")]
     use bytemuck::cast_slice_mut;
     use cryprot_core::block::Block;
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
+    #[cfg(feature = "libote-compat")]
+    use rand::{rngs::StdRng, SeedableRng, RngCore};
 
     use super::*;
 

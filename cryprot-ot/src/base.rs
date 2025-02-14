@@ -1,14 +1,14 @@
 use std::io;
 
-use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, RistrettoPoint, Scalar};
-use futures::{SinkExt, StreamExt};
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use cryprot_core::{
     buf::Buf,
     random_oracle::{Hash, RandomOracle},
     Block,
 };
 use cryprot_net::{Connection, ConnectionError};
+use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, RistrettoPoint, Scalar};
+use futures::{SinkExt, StreamExt};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
@@ -166,8 +166,8 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use rand::{rngs::StdRng, SeedableRng};
     use cryprot_net::testing::{init_tracing, local_conn};
+    use rand::{rngs::StdRng, SeedableRng};
 
     use super::SimplestOt;
     use crate::{random_choices, RotReceiver, RotSender};

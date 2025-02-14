@@ -1,17 +1,20 @@
-use std::{io, iter, mem, panic::resume_unwind};
+use std::{io, iter, marker::PhantomData, mem, panic::resume_unwind, task::Poll};
 
+use bytemuck::cast_slice_mut;
 use cryprot_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     alloc::allocate_zeroed_vec,
     buf::Buf,
+    random_oracle::{self},
     tokio_rayon::spawn_compute,
     transpose::transpose_bitmatrix,
     utils::{and_inplace_elem, xor_inplace},
     Block,
 };
 use cryprot_net::{Connection, ConnectionError};
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use futures::{future::poll_fn, FutureExt, SinkExt, StreamExt};
+use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -21,14 +24,15 @@ use tracing::Level;
 
 use crate::{
     base::{self, SimplestOt},
-    phase, random_choices, Connected, RotReceiver, RotSender,
+    phase, random_choices, Connected, Malicious, MaliciousMarker, RotReceiver, RotSender, Security,
+    SemiHonest, SemiHonestMarker,
 };
 
 pub const BASE_OT_COUNT: usize = 128;
 
 pub const DEFAULT_OT_BATCH_SIZE: usize = 2_usize.pow(16);
 
-pub struct OtExtensionSender {
+pub struct OtExtensionSender<S: Security> {
     rng: StdRng,
     base_ot: SimplestOt,
     conn: Connection,
@@ -36,37 +40,56 @@ pub struct OtExtensionSender {
     base_choices: Vec<Choice>,
     delta: Option<Block>,
     batch_size: usize,
+    security: PhantomData<S>,
 }
 
-pub struct OtExtensionReceiver {
+pub struct OtExtensionReceiver<S: Security> {
     base_ot: SimplestOt,
     conn: Connection,
     base_rngs: Vec<[AesRng; 2]>,
     batch_size: usize,
+    security: PhantomData<S>,
+    rng: StdRng,
 }
 
+pub type SemiHonestOtExtensionSender = OtExtensionSender<SemiHonestMarker>;
+pub type SemiHonestOtExtensionReceiver = OtExtensionReceiver<SemiHonestMarker>;
+
+pub type MaliciousOtExtensionSender = OtExtensionSender<MaliciousMarker>;
+pub type MaliciousOtExtensionReceiver = OtExtensionReceiver<MaliciousMarker>;
+
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     #[error("unable to compute base OTs")]
     BaseOT(#[from] base::Error),
     #[error("connection error to peer")]
     Connection(#[from] ConnectionError),
-    #[error("receive error")]
-    Receive(#[source] io::Error),
-    #[error("compute worker thread is unreachable")]
-    WorkerThreadUnreachable,
-    #[error("send error")]
-    Send(#[source] io::Error),
+    #[error("error in sending/receiving data")]
+    Communication(#[from] io::Error),
+    #[error("connection closed by peer")]
+    UnexcpectedClose,
+    /// Only possible for malicious variant.
+    #[error("Commitment does not match seed")]
+    WrongCommitment,
+    /// Only possible for malicious variant.
+    #[error("malicious check failed")]
+    MaliciousCheck,
+    #[doc(hidden)]
+    #[error("async task is dropped. This error should not be observable.")]
+    AsyncTaskDropped,
 }
 
-impl OtExtensionSender {
+impl<S: Security> OtExtensionSender<S> {
     pub fn new(conn: Connection) -> Self {
         Self::new_with_rng(conn, StdRng::from_entropy())
     }
 
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
-        let base_ot =
-            SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng).unwrap());
+        let base_ot = SimplestOt::new_with_rng(
+            conn.sub_connection(),
+            StdRng::from_rng(&mut rng).expect("infallible"),
+        );
         Self {
             rng,
             base_ot,
@@ -75,6 +98,7 @@ impl OtExtensionSender {
             base_choices: vec![],
             delta: None,
             batch_size: DEFAULT_OT_BATCH_SIZE,
+            security: PhantomData,
         }
     }
 
@@ -101,13 +125,18 @@ impl OtExtensionSender {
     }
 }
 
-impl Connected for OtExtensionSender {
+impl<S: Security> Connected for OtExtensionSender<S> {
     fn connection(&mut self) -> &mut Connection {
         &mut self.conn
     }
 }
 
-impl RotSender for OtExtensionSender {
+impl SemiHonest for OtExtensionSender<SemiHonestMarker> {}
+impl SemiHonest for OtExtensionSender<MaliciousMarker> {}
+
+impl Malicious for OtExtensionSender<MaliciousMarker> {}
+
+impl<S: Security> RotSender for OtExtensionSender<S> {
     type Error = Error;
 
     /// Sender part of OT extension.
@@ -123,6 +152,8 @@ impl RotSender for OtExtensionSender {
         let batch_size = self.batch_size();
         let batches = count / batch_size;
         let batch_size_remainder = count % batch_size;
+        let num_extra = (S::MALICIOUS_SECURITY as usize) * 128;
+
         assert_eq!(
             0,
             batch_size_remainder % 128,
@@ -131,7 +162,7 @@ impl RotSender for OtExtensionSender {
 
         let batch_sizes = iter::repeat(batch_size)
             .take(batches)
-            .chain(iter::once(batch_size_remainder));
+            .chain((batch_size_remainder != 0).then_some(batch_size_remainder));
 
         if !self.has_base_ots() {
             self.do_base_ots().await?;
@@ -140,90 +171,163 @@ impl RotSender for OtExtensionSender {
         let delta = self.delta.expect("base OTs are done");
         let mut sub_conn = self.conn.sub_connection();
 
+        let their_seed_comm: Option<random_oracle::Hash> = if S::MALICIOUS_SECURITY {
+            let (_, mut rx) = sub_conn.stream().await?;
+            Some(rx.next().await.ok_or(Error::UnexcpectedClose)??)
+        } else {
+            None
+        };
+
         // channel for communication between async task and compute thread
         let (ch_s, ch_r) = std::sync::mpsc::channel::<Vec<Block>>();
+        let (kos_ch_s, mut kos_ch_r_task) = tokio::sync::mpsc::unbounded_channel::<Block>();
+        let (kos_ch_s_task, kos_ch_r) = std::sync::mpsc::channel::<Block>();
         // take these to move them into compute thread, will be returned via ret channel
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let base_choices = mem::take(&mut self.base_choices);
-        let batch_sizes_th = batch_sizes.clone();
+        let mut batch_sizes_th = batch_sizes.clone();
         let owned_ots = mem::take(ots);
+        let mut rng = StdRng::from_rng(&mut self.rng).expect("infallible");
 
         // spawn compute thread for CPU intensive work. This way we increase throughput
         // and don't risk of blocking tokio worker threads
         let jh = spawn_compute(move || {
             let mut ots = owned_ots;
+            let mut extra_messages: Vec<[Block; 2]> = Vec::zeroed(num_extra);
             let mut transposed = allocate_zeroed_vec::<Block>(batch_size);
 
-            // to increase throughput, we divide the `count` many OTs into batches of size
-            // self.batch_size(). Crucially, this allows us to do the transpose
-            // and hash step while not having received the complete data from the
-            // OtExtensionReceiver.
-            for (ot_batch, batch_size) in ots.chunks_mut(batch_size).zip(batch_sizes_th) {
-                let cols_byte_batch = batch_size / 8;
-                // we temporarily use the output OT buffer to hold the current chunk of the V
-                // matrix which we XOR with our received row or 0 and then
-                // transpose into `transposed`
-                let v_mat = bytemuck::cast_slice_mut(&mut ot_batch[..batch_size / 2]);
-                let row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
+            for (ots, batch_sizes) in [
+                (
+                    &mut ots[..],
+                    &mut batch_sizes_th as &mut dyn Iterator<Item = _>,
+                ),
+                (&mut extra_messages[..], &mut iter::once(num_extra)),
+            ] {
+                // to increase throughput, we divide the `count` many OTs into batches of size
+                // self.batch_size(). Crucially, this allows us to do the transpose
+                // and hash step while not having received the complete data from the
+                // OtExtensionReceiver.
+                for (ot_batch, batch_size) in ots.chunks_mut(batch_size).zip(batch_sizes) {
+                    let cols_byte_batch = batch_size / 8;
+                    // we temporarily use the output OT buffer to hold the current chunk of the V
+                    // matrix which we XOR with our received row or 0 and then
+                    // transpose into `transposed`
+                    let v_mat = bytemuck::cast_slice_mut(&mut ot_batch[..batch_size / 2]);
+                    let row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
 
-                for ((v_row, base_rng), base_choice) in
-                    row_iter.zip(&mut base_rngs).zip(&base_choices)
-                {
-                    base_rng.fill_bytes(v_row);
-                    let Ok(mut recv_row) = ch_r.recv() else {
-                        // ch_s was dropped before completion, stop thread
-                        return None;
-                    };
-                    // constant time version of
-                    // if !base_choice {
-                    //   v_row ^= recv_row;
-                    // }
-                    let choice_mask =
-                        Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
-                    // if choice_mask == 0, we zero out recv_row
-                    // if choice_mask == 1, recv_row is not changed
-                    and_inplace_elem(&mut recv_row, choice_mask);
-                    let v_row = bytemuck::cast_slice_mut(v_row);
-                    // if choice_mask == 0, v_row = v_row ^ 000000..
-                    // if choice_mask == 1, v_row = v_row ^ recv_row
-                    xor_inplace(v_row, &recv_row);
-                }
-                {
-                    let transposed = bytemuck::cast_slice_mut(&mut transposed);
-                    transpose_bitmatrix(v_mat, &mut transposed[..v_mat.len()], BASE_OT_COUNT);
-                }
+                    for ((v_row, base_rng), base_choice) in
+                        row_iter.zip(&mut base_rngs).zip(&base_choices)
+                    {
+                        base_rng.fill_bytes(v_row);
+                        let mut recv_row = ch_r.recv()?;
+                        // constant time version of
+                        // if !base_choice {
+                        //   v_row ^= recv_row;
+                        // }
+                        let choice_mask =
+                            Block::conditional_select(&Block::ZERO, &Block::ONES, *base_choice);
+                        // if choice_mask == 0, we zero out recv_row
+                        // if choice_mask == 1, recv_row is not changed
+                        and_inplace_elem(&mut recv_row, choice_mask);
+                        let v_row = bytemuck::cast_slice_mut(v_row);
+                        // if choice_mask == 0, v_row = v_row ^ 000000..
+                        // if choice_mask == 1, v_row = v_row ^ recv_row
+                        xor_inplace(v_row, &recv_row);
+                    }
+                    {
+                        let transposed = bytemuck::cast_slice_mut(&mut transposed);
+                        transpose_bitmatrix(v_mat, &mut transposed[..v_mat.len()], BASE_OT_COUNT);
+                    }
 
-                for (v, ots) in transposed.iter().zip(ot_batch.iter_mut()) {
-                    *ots = [*v, *v ^ delta]
-                }
+                    for (v, ots) in transposed.iter().zip(ot_batch.iter_mut()) {
+                        *ots = [*v, *v ^ delta]
+                    }
 
-                FIXED_KEY_HASH.cr_hash_slice_mut(bytemuck::cast_slice_mut(ot_batch));
+                    if !S::MALICIOUS_SECURITY {
+                        FIXED_KEY_HASH.cr_hash_slice_mut(bytemuck::cast_slice_mut(ot_batch));
+                    }
+                }
             }
 
-            Some((ots, base_rngs, base_choices))
+            if S::MALICIOUS_SECURITY {
+                let my_seed: Block = rng.gen();
+                kos_ch_s.send(my_seed)?;
+                let their_seed = kos_ch_r.recv()?;
+                if commit(their_seed) != their_seed_comm.expect("set at after base ots") {
+                    return Err(Error::WrongCommitment);
+                }
+
+                let seed = my_seed ^ their_seed;
+                let mut rng = AesRng::from_seed(seed);
+
+                let mut q1 = Block::ZERO;
+                let mut q2 = Block::ZERO;
+                for [msg, _] in ots.iter_mut().chain(extra_messages.iter_mut()) {
+                    let challenge: Block = rng.gen();
+                    let (qi1, qi2) = msg.clmul(&challenge);
+                    q1 ^= qi1;
+                    q2 ^= qi2;
+                }
+
+                FIXED_KEY_HASH
+                    .tmmo_hash_slice_mut(cast_slice_mut(&mut ots), |idx| Block::from(idx / 2));
+
+                let q = Block::gf_reduce(&q1, &q2);
+                let received_x = kos_ch_r.recv()?;
+                let received_t = kos_ch_r.recv()?;
+                let tt = received_x.gf_mul(&delta) ^ q;
+                if tt != received_t {
+                    return Err(Error::MaliciousCheck);
+                }
+            }
+
+            Ok((ots, base_rngs, base_choices))
         });
 
         let (_, mut recv) = sub_conn.byte_stream().await?;
 
-        for batch_size in batch_sizes {
+        for batch_size in batch_sizes.chain((num_extra != 0).then_some(num_extra)) {
             for _ in 0..BASE_OT_COUNT {
                 let mut recv_row = allocate_zeroed_vec(batch_size / Block::BITS);
                 recv.read_exact(bytemuck::cast_slice_mut(&mut recv_row))
-                    .await
-                    .map_err(Error::Receive)?;
+                    .await?;
                 if ch_s.send(recv_row).is_err() {
                     // If we can't send on the channel, the channel must've been dropped due to a
-                    // panic in the worker thread. So we try to join the comput task to resume the
-                    // panic in the worker thread.
+                    // panic in the worker thread. So we try to join the compute task to resume the
+                    // panic
                     resume_unwind(jh.await.map(drop).expect_err("expected thread error"));
                 };
             }
         }
 
-        let (owned_ots, base_rngs, base_choices) = jh
-            .await
-            .expect("worker panicked")
-            .expect("compute task received all data so should return Some");
+        if S::MALICIOUS_SECURITY {
+            let (mut kos_send, mut kos_recv) = sub_conn.stream::<Block>().await?;
+            let success = 'success: {
+                let Some(blk) = kos_ch_r_task.recv().await else {
+                    break 'success false;
+                };
+                kos_send.send(blk).await?;
+
+                let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
+                if kos_ch_s_task.send(blk).is_err() {
+                    break 'success false;
+                }
+                let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
+                if kos_ch_s_task.send(blk).is_err() {
+                    break 'success false;
+                }
+                let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
+                if kos_ch_s_task.send(blk).is_err() {
+                    break 'success false;
+                }
+                true
+            };
+            if !success {
+                resume_unwind(jh.await.map(drop).expect_err("expected thread error"));
+            }
+        }
+
+        let (owned_ots, base_rngs, base_choices) = jh.await.expect("panic in worker thread")?;
         self.base_rngs = base_rngs;
         self.base_choices = base_choices;
         *ots = owned_ots;
@@ -231,18 +335,23 @@ impl RotSender for OtExtensionSender {
     }
 }
 
-impl OtExtensionReceiver {
+impl<S: Security> OtExtensionReceiver<S> {
     pub fn new(conn: Connection) -> Self {
         Self::new_with_rng(conn, StdRng::from_entropy())
     }
 
-    pub fn new_with_rng(mut conn: Connection, rng: StdRng) -> Self {
-        let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), rng);
+    pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
+        let base_ot = SimplestOt::new_with_rng(
+            conn.sub_connection(),
+            StdRng::from_rng(&mut rng).expect("infallible"),
+        );
         Self {
+            rng,
             base_ot,
             conn,
             base_rngs: vec![],
             batch_size: DEFAULT_OT_BATCH_SIZE,
+            security: PhantomData,
         }
     }
 
@@ -270,13 +379,13 @@ impl OtExtensionReceiver {
     }
 }
 
-impl Connected for OtExtensionReceiver {
+impl<S: Security> Connected for OtExtensionReceiver<S> {
     fn connection(&mut self) -> &mut Connection {
         &mut self.conn
     }
 }
 
-impl RotReceiver for OtExtensionReceiver {
+impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
     type Error = Error;
 
     /// Receiver part of OT extension.
@@ -310,61 +419,159 @@ impl RotReceiver for OtExtensionReceiver {
             self.do_base_ots().await?;
         }
 
-        let cols_byte_batch = batch_size / 8;
-
-        let choice_vec = choices_to_u8_vec(choices);
         let mut sub_conn = self.conn.sub_connection();
 
+        let my_seed = if S::MALICIOUS_SECURITY {
+            let (mut tx, _) = sub_conn.stream().await?;
+            let seed = self.rng.gen();
+            tx.send(commit(seed)).await?;
+            Some(seed)
+        } else {
+            None
+        };
+
+        let cols_byte_batch = batch_size / 8;
+        let choice_vec = choices_to_u8_vec(choices);
+
         let (ch_s, mut ch_r) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (kos_ch_s, mut kos_ch_r_task) = tokio::sync::mpsc::unbounded_channel::<Block>();
+        let (kos_ch_s_task, kos_ch_r) = std::sync::mpsc::channel::<Block>();
+        let mut rng = StdRng::from_rng(&mut self.rng).expect("infallible");
 
         let mut base_rngs = mem::take(&mut self.base_rngs);
-        let mut owned_ots = mem::take(ots);
-        let jh = spawn_compute(move || {
+        let owned_ots = mem::take(ots);
+        let choices = (S::MALICIOUS_SECURITY).then(|| choices.to_owned());
+        let mut jh = spawn_compute(move || {
+            let mut ots = owned_ots;
             let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
+            let num_extra = (S::MALICIOUS_SECURITY as usize) * 128;
+            let mut extra_messages: Vec<Block> = Vec::zeroed(num_extra);
+            let extra_choices = random_choices(num_extra, &mut rng);
+            let extra_choice_vec = choices_to_u8_vec(&extra_choices);
 
-            for (output_chunk, choice_batch) in owned_ots
-                .chunks_mut(batch_size)
-                .zip(choice_vec.chunks(cols_byte_batch))
-            {
-                // might change for last chunk
-                let cols_byte_batch = choice_batch.len();
-                for (row, [rng1, rng2]) in
-                    t_mat.chunks_exact_mut(cols_byte_batch).zip(&mut base_rngs)
+            for (ots, choice_vec) in [
+                (&mut ots[..], &choice_vec),
+                (&mut extra_messages[..], &extra_choice_vec),
+            ] {
+                for (output_chunk, choice_batch) in ots
+                    .chunks_mut(batch_size)
+                    .zip(choice_vec.chunks(cols_byte_batch))
                 {
-                    rng1.fill_bytes(row);
-                    let mut send_row = vec![0_u8; cols_byte_batch];
-                    rng2.fill_bytes(&mut send_row);
-                    for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
-                        *v2 ^= *v1 ^ *choices;
+                    // might change for last chunk
+                    let cols_byte_batch = choice_batch.len();
+                    for (row, [rng1, rng2]) in
+                        t_mat.chunks_exact_mut(cols_byte_batch).zip(&mut base_rngs)
+                    {
+                        rng1.fill_bytes(row);
+                        let mut send_row = vec![0_u8; cols_byte_batch];
+                        rng2.fill_bytes(&mut send_row);
+                        for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
+                            *v2 ^= *v1 ^ *choices;
+                        }
+                        ch_s.send(send_row)?;
                     }
-                    if ch_s.send(send_row).is_err() {
-                        // async task including ch_r is dropped, so we stop the thread
-                        return None;
+                    let output_bytes = bytemuck::cast_slice_mut(output_chunk);
+                    transpose_bitmatrix(
+                        &t_mat[..BASE_OT_COUNT * cols_byte_batch],
+                        output_bytes,
+                        BASE_OT_COUNT,
+                    );
+                    if !S::MALICIOUS_SECURITY {
+                        FIXED_KEY_HASH.cr_hash_slice_mut(output_chunk);
                     }
                 }
-                let output_bytes = bytemuck::cast_slice_mut(output_chunk);
-                transpose_bitmatrix(
-                    &t_mat[..BASE_OT_COUNT * cols_byte_batch],
-                    output_bytes,
-                    BASE_OT_COUNT,
-                );
-                FIXED_KEY_HASH.cr_hash_slice_mut(output_chunk);
             }
 
-            Some((owned_ots, base_rngs))
+            if S::MALICIOUS_SECURITY {
+                // dropping ch_s is important so the async task exits the ch_r loop
+                drop(ch_s);
+                let my_seed = my_seed.expect("initialized earlier");
+                let their_seed = kos_ch_r.recv()?;
+                kos_ch_s.send(my_seed)?;
+
+                let seed = my_seed ^ their_seed;
+                let mut rng = AesRng::from_seed(seed);
+
+                let mut x = Block::ZERO;
+                let mut t1 = Block::ZERO;
+                let mut t2 = Block::ZERO;
+                let zero_one = [Block::ZERO, Block::ONES];
+                for (msg, choice) in ots
+                    .iter_mut()
+                    .zip(&choices.expect("set befor spawn_compute if malicious"))
+                    .chain(extra_messages.iter_mut().zip(&extra_choices))
+                {
+                    let challenge: Block = rng.gen();
+                    x ^= challenge & zero_one[choice.unwrap_u8() as usize];
+                    let (ti1, ti2) = msg.clmul(&challenge);
+                    t1 ^= ti1;
+                    t2 ^= ti2;
+                }
+                FIXED_KEY_HASH.tmmo_hash_slice_mut(&mut ots, Block::from);
+
+                t1 = Block::gf_reduce(&t1, &t2);
+
+                kos_ch_s.send(x)?;
+                kos_ch_s.send(t1)?;
+            }
+            Ok::<_, Error>((ots, base_rngs))
         });
 
         let (mut send, _) = sub_conn.byte_stream().await?;
         while let Some(row) = ch_r.recv().await {
-            send.write_all(&row).await.map_err(Error::Send)?;
+            send.write_all(&row).await.map_err(Error::Communication)?;
         }
 
-        let (owned_ots, base_rngs) = jh.await.expect("panic in worker thread").unwrap();
+        if S::MALICIOUS_SECURITY {
+            // If the worker thread panics we break early from the above loop. We check for
+            // the panic to prevent a deadlock where we try to get the next message but the
+            // peer is still in the worker thread
+            let err = poll_fn(|cx| match jh.poll_unpin(cx) {
+                Poll::Ready(res) => Poll::Ready(res.map(drop)),
+                Poll::Pending => Poll::Ready(Ok(())),
+            })
+            .await;
+            if let Err(err) = err {
+                resume_unwind(err);
+            };
+            let (mut kos_send, mut kos_recv) = sub_conn.stream::<Block>().await?;
+
+            let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
+
+            let success = 'success: {
+                if kos_ch_s_task.send(blk).is_err() {
+                    break 'success false;
+                }
+                let Some(blk) = kos_ch_r_task.recv().await else {
+                    break 'success false;
+                };
+                kos_send.send(blk).await?;
+                let Some(blk) = kos_ch_r_task.recv().await else {
+                    break 'success false;
+                };
+                kos_send.send(blk).await?;
+                let Some(blk) = kos_ch_r_task.recv().await else {
+                    break 'success false;
+                };
+                kos_send.send(blk).await?;
+
+                true
+            };
+            if !success {
+                resume_unwind(jh.await.map(drop).expect_err("expected thread error"));
+            }
+        }
+
+        let (owned_ots, base_rngs) = jh.await.expect("panic in worker thread")?;
 
         self.base_rngs = base_rngs;
         *ots = owned_ots;
         Ok(())
     }
+}
+
+fn commit(b: Block) -> random_oracle::Hash {
+    random_oracle::hash(b.as_bytes())
 }
 
 fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
@@ -378,6 +585,18 @@ fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
     v
 }
 
+impl From<std::sync::mpsc::RecvError> for Error {
+    fn from(_: std::sync::mpsc::RecvError) -> Self {
+        Error::AsyncTaskDropped
+    }
+}
+
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
+    fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        Error::AsyncTaskDropped
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -385,8 +604,11 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
 
     use crate::{
-        extension::{OtExtensionReceiver, OtExtensionSender, DEFAULT_OT_BATCH_SIZE},
-        random_choices, RotReceiver, RotSender,
+        extension::{
+            OtExtensionReceiver, OtExtensionSender, SemiHonestOtExtensionReceiver,
+            SemiHonestOtExtensionSender, DEFAULT_OT_BATCH_SIZE,
+        },
+        random_choices, MaliciousMarker, RotReceiver, RotSender,
     };
 
     #[tokio::test]
@@ -397,8 +619,8 @@ mod tests {
         let rng1 = StdRng::seed_from_u64(42);
         let mut rng2 = StdRng::seed_from_u64(24);
         let choices = random_choices(COUNT, &mut rng2);
-        let mut sender = OtExtensionSender::new_with_rng(c1, rng1);
-        let mut receiver = OtExtensionReceiver::new_with_rng(c2, rng2);
+        let mut sender = SemiHonestOtExtensionSender::new_with_rng(c1, rng1);
+        let mut receiver = SemiHonestOtExtensionReceiver::new_with_rng(c2, rng2);
         let (send_ots, recv_ots) =
             tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
         for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
@@ -414,8 +636,8 @@ mod tests {
         let rng1 = StdRng::seed_from_u64(42);
         let mut rng2 = StdRng::seed_from_u64(24);
         let choices = random_choices(COUNT, &mut rng2);
-        let mut sender = OtExtensionSender::new_with_rng(c1, rng1);
-        let mut receiver = OtExtensionReceiver::new_with_rng(c2, rng2);
+        let mut sender = SemiHonestOtExtensionSender::new_with_rng(c1, rng1);
+        let mut receiver = SemiHonestOtExtensionReceiver::new_with_rng(c2, rng2);
         let (send_ots, recv_ots) =
             tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
         for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
@@ -431,8 +653,25 @@ mod tests {
         let rng1 = StdRng::seed_from_u64(42);
         let mut rng2 = StdRng::seed_from_u64(24);
         let choices = random_choices(COUNT, &mut rng2);
-        let mut sender = OtExtensionSender::new_with_rng(c1, rng1);
-        let mut receiver = OtExtensionReceiver::new_with_rng(c2, rng2);
+        let mut sender = SemiHonestOtExtensionSender::new_with_rng(c1, rng1);
+        let mut receiver = SemiHonestOtExtensionReceiver::new_with_rng(c2, rng2);
+        let (send_ots, recv_ots) =
+            tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
+        for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
+            assert_eq!(r, s[c.unwrap_u8() as usize]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extension_malicious() {
+        let _g = init_tracing();
+        const COUNT: usize = DEFAULT_OT_BATCH_SIZE;
+        let (c1, c2) = local_conn().await.unwrap();
+        let rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(24);
+        let choices = random_choices(COUNT, &mut rng2);
+        let mut sender = OtExtensionSender::<MaliciousMarker>::new_with_rng(c1, rng1);
+        let mut receiver = OtExtensionReceiver::<MaliciousMarker>::new_with_rng(c2, rng2);
         let (send_ots, recv_ots) =
             tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
         for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {

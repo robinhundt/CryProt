@@ -26,10 +26,12 @@ impl RngCore for AesRng {
     fn next_u32(&mut self) -> u32 {
         self.0.next_u32()
     }
+
     #[inline]
     fn next_u64(&mut self) -> u64 {
         self.0.next_u64()
     }
+
     #[inline]
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         let block_size = mem::size_of::<aes::Block>();
@@ -48,6 +50,7 @@ impl RngCore for AesRng {
         // handle the tail
         self.0.fill_bytes(rest_bytes)
     }
+
     #[inline]
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         self.0.try_fill_bytes(dest)
@@ -55,12 +58,13 @@ impl RngCore for AesRng {
 }
 
 impl SeedableRng for AesRng {
-    type Seed = <AesRngCore as SeedableRng>::Seed;
+    type Seed = Block;
 
     #[inline]
     fn from_seed(seed: Self::Seed) -> Self {
         AesRng(BlockRng::<AesRngCore>::from_seed(seed))
     }
+
     #[inline]
     fn from_rng<R: RngCore>(rng: R) -> Result<Self, Error> {
         BlockRng::<AesRngCore>::from_rng(rng).map(AesRng)

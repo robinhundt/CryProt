@@ -71,14 +71,34 @@ impl AesHash {
         xor_inplace(out, inp);
     }
 
-    // TODO this should take a temp buffer. Or maybe I can simply chunk the hashing
-    // and use a stack alloced buffer? Should work
     pub fn cr_hash_slice_mut(&self, x: &mut [Block]) {
         let mut tmp = [aes::Block::default(); AES_PAR_BLOCKS];
+
         for chunk in x.chunks_mut(AES_PAR_BLOCKS) {
             self.aes
                 .encrypt_blocks_b2b(bytemuck::cast_slice(chunk), &mut tmp[..chunk.len()])
                 .unwrap();
+            chunk
+                .iter_mut()
+                .zip(tmp)
+                .for_each(|(x, x_enc)| *x ^= x_enc.into());
+        }
+    }
+
+    pub fn tmmo_hash_slice_mut(&self, x: &mut [Block], mut tweak_fn: impl FnMut(usize) -> Block) {
+        let mut tmp = [aes::Block::default(); AES_PAR_BLOCKS];
+        for (chunk_idx, chunk) in x.chunks_mut(AES_PAR_BLOCKS).enumerate() {
+            self.aes
+                .encrypt_blocks_b2b(bytemuck::cast_slice(chunk), &mut tmp[..chunk.len()])
+                .unwrap();
+            chunk
+                .iter_mut()
+                .zip(&mut tmp)
+                .enumerate()
+                .for_each(|(idx, (dest, x_enc))| {
+                    *dest = Block::from(*x_enc) ^ tweak_fn(chunk_idx * AES_PAR_BLOCKS + idx);
+                });
+            self.aes.encrypt_blocks(bytemuck::cast_slice_mut(chunk));
             chunk
                 .iter_mut()
                 .zip(tmp)

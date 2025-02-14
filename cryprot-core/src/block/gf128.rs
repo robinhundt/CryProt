@@ -451,7 +451,7 @@ mod scalar {
 
 /// Test that scalar implementation and clmul implementation produce the same
 /// results
-#[cfg(all(test, target_feature = "pclmulqdq"))]
+#[cfg(all(test, not(miri), target_feature = "pclmulqdq"))]
 mod tests {
     use std::mem::transmute;
 

@@ -4,16 +4,19 @@ use std::{
 };
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use rand::{rngs::StdRng, SeedableRng};
 use cryprot_core::{alloc::HugePageMemory, Block};
 use cryprot_net::testing::{init_bench_tracing, local_conn};
 use cryprot_ot::{
     base::SimplestOt,
-    extension::{OtExtensionReceiver, OtExtensionSender},
+    extension::{
+        MaliciousOtExtensionReceiver, MaliciousOtExtensionSender, SemiHonestOtExtensionReceiver,
+        SemiHonestOtExtensionSender,
+    },
     random_choices,
     silent_ot::{ChoiceBitPacking, SilentOtReceiver, SilentOtSender},
     RotReceiver, RotSender,
 };
+use rand::{rngs::StdRng, SeedableRng};
 use tokio::runtime::{self, Runtime};
 
 fn create_mt_runtime(threads: usize) -> Runtime {
@@ -58,9 +61,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         )
     });
 
-    let p = get_var_size("SEEC_BENCH_OT_POWER", 24);
+    let p = get_var_size("CRYPROT_BENCH_OT_POWER", 24);
     let count = 2_usize.pow(p);
-    let mut g = c.benchmark_group("OT extension");
+    let mut g = c.benchmark_group("semi-honest OT extension");
     g.sample_size(10);
     g.throughput(criterion::Throughput::Elements(count as u64));
     g.bench_function(format!("single 2**{p} extension OTs"), |b| {
@@ -79,9 +82,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                         let rng2 = StdRng::seed_from_u64(42 * 42);
                         let choices = random_choices(count, &mut rng1);
                         let mut sender =
-                            OtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
+                            SemiHonestOtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
                         let mut receiver =
-                            OtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
+                            SemiHonestOtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
                         tokio::try_join!(sender.do_base_ots(), receiver.do_base_ots()).unwrap();
                         (sender, receiver, choices)
                     };
@@ -126,15 +129,19 @@ fn criterion_benchmark(c: &mut Criterion) {
                         let mut rng2 = StdRng::seed_from_u64(42 * 42);
                         let choices1 = random_choices(count, &mut rng1);
                         let choices2 = random_choices(count, &mut rng2);
-                        let mut sender1 =
-                            OtExtensionSender::new_with_rng(c11.sub_connection(), rng1.clone());
-                        let mut receiver1 =
-                            OtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2.clone());
+                        let mut sender1 = SemiHonestOtExtensionSender::new_with_rng(
+                            c11.sub_connection(),
+                            rng1.clone(),
+                        );
+                        let mut receiver1 = SemiHonestOtExtensionReceiver::new_with_rng(
+                            c22.sub_connection(),
+                            rng2.clone(),
+                        );
 
                         let mut sender2 =
-                            OtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
+                            SemiHonestOtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
                         let mut receiver2 =
-                            OtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
+                            SemiHonestOtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
 
                         tokio::try_join!(
                             sender1.do_base_ots(),
@@ -161,10 +168,58 @@ fn criterion_benchmark(c: &mut Criterion) {
             }
         })
     });
-    drop(g);
+    g.finish();
+
+    let mut g = c.benchmark_group("malicious OT extension");
+    g.sample_size(10);
+    g.throughput(criterion::Throughput::Elements(count as u64));
+    g.bench_function(format!("single 2**{p} extension OTs"), |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let mut c11 = c1.sub_connection();
+            let mut c22 = c2.sub_connection();
+
+            async move {
+                let mut duration = Duration::ZERO;
+                let mut sender_ots = HugePageMemory::zeroed(count);
+                let mut receiver_ots = HugePageMemory::zeroed(count);
+                for _ in 0..iters {
+                    // setup not included in duration
+                    let (mut sender, mut receiver, choices) = {
+                        let mut rng1 = StdRng::seed_from_u64(42);
+                        let rng2 = StdRng::seed_from_u64(42 * 42);
+                        let choices = random_choices(count, &mut rng1);
+                        let mut sender =
+                            MaliciousOtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
+                        let mut receiver =
+                            MaliciousOtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
+                        tokio::try_join!(sender.do_base_ots(), receiver.do_base_ots()).unwrap();
+                        (sender, receiver, choices)
+                    };
+                    let now = Instant::now();
+                    (sender_ots, receiver_ots) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender.send_into(&mut sender_ots).await.unwrap();
+                            sender_ots
+                        }),
+                        tokio::spawn(async move {
+                            receiver
+                                .receive_into(&choices, &mut receiver_ots)
+                                .await
+                                .unwrap();
+                            receiver_ots
+                        })
+                    )
+                    .unwrap();
+                    duration += now.elapsed();
+                }
+                duration
+            }
+        })
+    });
+    g.finish();
 
     let mut g = c.benchmark_group("silent extension");
-    let p = get_var_size("SEEC_BENCH_SILENT_OT_POWER", 21);
+    let p = get_var_size("CRYPROT_BENCH_SILENT_OT_POWER", 21);
     let count = 2_usize.pow(p);
     g.sample_size(10);
     g.throughput(criterion::Throughput::Elements(count as u64));
@@ -182,16 +237,14 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let now = Instant::now();
                     (sender, receiver) = tokio::try_join!(
                         tokio::spawn(async move {
-                            sender.correlated_send(count, Block::ONES).await;
+                            sender.correlated_send(count, Block::ONES).await.unwrap();
                             sender
                         }),
                         tokio::spawn(async move {
                             receiver
-                                .correlated_receive(
-                                    count,
-                                    ChoiceBitPacking::Packed,
-                                )
-                                .await;
+                                .correlated_receive(count, ChoiceBitPacking::Packed)
+                                .await
+                                .unwrap();
                             receiver
                         })
                     )
@@ -217,11 +270,11 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let now = Instant::now();
                     (sender, receiver) = tokio::try_join!(
                         tokio::spawn(async move {
-                            sender.random_send(count).await;
+                            sender.random_send(count).await.unwrap();
                             sender
                         }),
                         tokio::spawn(async move {
-                            receiver.random_receive(count).await;
+                            receiver.random_receive(count).await.unwrap();
                             receiver
                         })
                     )
@@ -232,6 +285,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             }
         })
     });
+    g.finish();
 }
 
 criterion_group!(benches, criterion_benchmark);

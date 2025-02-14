@@ -8,13 +8,13 @@ bench = false
 
 [features]
 __testing = ["dep:tracing-subscriber"]
+nightly = []
 num-traits = ["dep:num-traits"]
 tokio-rayon = ["dep:rayon", "dep:tokio"]
-nightly = []
 
 [dependencies]
 aes.workspace = true
-blake3 = { workspace = true, features = ["traits-preview"] }
+blake3 = { workspace = true, features = ["serde", "traits-preview"] }
 bytemuck = { workspace = true, features = ["derive"] }
 cpufeatures.workspace = true
 hybrid-array = { workspace = true }

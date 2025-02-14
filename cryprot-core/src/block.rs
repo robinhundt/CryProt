@@ -4,7 +4,7 @@ use std::ops::{
 
 use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};
-use rand::{distributions::Standard, prelude::Distribution, Fill, Rng};
+use rand::{distributions::Standard, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 use wide::u8x16;
@@ -99,7 +99,7 @@ impl Block {
     pub fn high(&self) -> u64 {
         u64::from_ne_bytes(self.as_bytes()[8..].try_into().expect("correct len"))
     }
-    
+
     #[inline]
     pub fn lsb(&self) -> bool {
         *self & Block::ONE == Block::ONE
@@ -201,15 +201,9 @@ impl Eq for Block {}
 impl Distribution<Block> for Standard {
     #[inline]
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Block {
-        let bits = rng.gen();
-        Block::new(bits)
-    }
-}
-
-impl Fill for Block {
-    fn try_fill<R: Rng + ?Sized>(&mut self, rng: &mut R) -> Result<(), rand::Error> {
-        *self = rng.gen();
-        Ok(())
+        let mut bytes = [0; 16];
+        rng.fill_bytes(&mut bytes);
+        Block::new(bytes)
     }
 }
 
@@ -261,6 +255,12 @@ impl From<&Block> for u128 {
     fn from(value: &Block) -> Self {
         // todo correct endianness?
         u128::from_ne_bytes(*value.as_bytes())
+    }
+}
+
+impl From<usize> for Block {
+    fn from(value: usize) -> Self {
+        (value as u128).into()
     }
 }
 

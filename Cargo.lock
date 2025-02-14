@@ -573,7 +573,6 @@ dependencies = [
  "curve25519-dalek",
  "futures",
  "rand 0.8.5",
- "rayon",
  "subtle",
  "thiserror",
  "tokio",

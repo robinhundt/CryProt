@@ -1,12 +1,12 @@
 use std::mem;
 
 use bytemuck::{cast, cast_slice_mut};
+use cryprot_core::block::Block;
 use expander::ExpanderCode;
 use fast_aes_rng::FastAesRng;
-use cryprot_core::block::Block;
 use seq_macro::seq;
 
-use crate::GF2ops;
+use crate::Coeff;
 
 mod expander;
 mod expander_modd;
@@ -92,14 +92,14 @@ impl ExConvCode {
         &self.conf
     }
 
-    pub fn dual_encode<T: GF2ops>(&self, e: &mut [T]) {
+    pub fn dual_encode<T: Coeff>(&self, e: &mut [T]) {
         assert_eq!(self.conf.code_size, e.len(), "e must have len of code_size");
         let (prefix, suffix) = e.split_at_mut(self.message_size);
         self.accumulate(suffix);
         self.expander.expand(suffix, prefix);
     }
 
-    fn accumulate<T: GF2ops>(&self, x: &mut [T]) {
+    fn accumulate<T: Coeff>(&self, x: &mut [T]) {
         let size = self.conf.code_size - self.message_size;
         debug_assert_eq!(size, x.len());
 
@@ -109,7 +109,7 @@ impl ExConvCode {
         }
     }
 
-    fn accumulate_fixed<T: GF2ops>(&self, x: &mut [T], seed: Block) {
+    fn accumulate_fixed<T: Coeff>(&self, x: &mut [T], seed: Block) {
         let mut rng = FastAesRng::new(seed);
         let mut mtx_coeffs = rng.bytes();
 
@@ -129,7 +129,7 @@ impl ExConvCode {
         }
     }
 
-    fn acc_one_gen<const RANGE_CHECK: bool, T: GF2ops>(
+    fn acc_one_gen<const RANGE_CHECK: bool, T: Coeff>(
         &self,
         x: &mut [T],
         i: usize,
@@ -177,7 +177,7 @@ impl ExConvCode {
     }
 
     #[inline(always)]
-    fn acc_one_8_offsets<const RANGE_CHECK: bool, T: GF2ops>(x: &mut [T], j: usize) -> [usize; 8] {
+    fn acc_one_8_offsets<const RANGE_CHECK: bool, T: Coeff>(x: &mut [T], j: usize) -> [usize; 8] {
         let size = x.len();
         let mut js = [j, j + 1, j + 2, j + 3, j + 4, j + 5, j + 6, j + 7];
         if !RANGE_CHECK {
@@ -194,7 +194,7 @@ impl ExConvCode {
         js
     }
 
-    fn acc_one_8<const RANGE_CHECK: bool, T: GF2ops>(x: &mut [T], xi: T, j: usize, b: u8) {
+    fn acc_one_8<const RANGE_CHECK: bool, T: Coeff>(x: &mut [T], xi: T, j: usize, b: u8) {
         if mem::size_of::<T>() == 16 && mem::align_of::<T>() == 16 {
             #[cfg(target_feature = "sse4.1")]
             Self::acc_one_8_sse::<RANGE_CHECK>(cast_slice_mut(x), cast(xi), j, b);
@@ -205,7 +205,7 @@ impl ExConvCode {
         }
     }
 
-    fn acc_one_8_scalar<const RANGE_CHECK: bool, T: GF2ops>(x: &mut [T], xi: T, j: usize, b: u8) {
+    fn acc_one_8_scalar<const RANGE_CHECK: bool, T: Coeff>(x: &mut [T], xi: T, j: usize, b: u8) {
         let js = Self::acc_one_8_offsets::<RANGE_CHECK, _>(x, j);
 
         let b_bits = [b & 1, b & 2, b & 4, b & 8, b & 16, b & 32, b & 64, b & 128];
@@ -268,8 +268,8 @@ impl ExConvCode {
 #[cfg(test)]
 mod tests {
     use bytemuck::cast_slice_mut;
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
     use cryprot_core::block::Block;
+    use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     use super::*;
 
@@ -321,6 +321,7 @@ mod tests {
         assert_eq!(code.parity_cols(), code_size);
     }
 
+    #[cfg(feature = "libote-compat")]
     #[test]
     fn test_compare_to_libote() {
         let message_size = 200;
@@ -334,7 +335,7 @@ mod tests {
             let mut data_libote = data.clone();
             exconv.dual_encode(&mut data);
 
-            let mut libote_exconv = libote::ExConvCode::new(
+            let mut libote_exconv = libote_codes::ExConvCode::new(
                 message_size as u64,
                 code_size as u64,
                 exconv.conf.expander_weight as u64,
@@ -346,6 +347,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "libote-compat")]
     #[test]
     fn test_compare_to_libote_bytes() {
         let message_size = 200;
@@ -359,7 +361,7 @@ mod tests {
             let mut data_libote = data.clone();
             exconv.dual_encode(&mut data);
 
-            let mut libote_exconv = libote::ExConvCode::new(
+            let mut libote_exconv = libote_codes::ExConvCode::new(
                 message_size as u64,
                 code_size as u64,
                 exconv.conf.expander_weight as u64,

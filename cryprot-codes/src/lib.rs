@@ -5,14 +5,24 @@ use cryprot_core::Block;
 
 pub mod ex_conv;
 
-pub trait GF2ops: BitXor<Output = Self> + BitXorAssign + Copy + Clone + Pod + Sized {
+/// Sealed trait implemented for [`Block`] and [`u8`].
+pub trait Coeff:
+    BitXor<Output = Self> + BitXorAssign + Copy + Clone + Pod + Sized + private::Sealed
+{
     const ZERO: Self;
 }
 
-impl GF2ops for Block {
+impl Coeff for Block {
     const ZERO: Self = Block::ZERO;
 }
 
-impl GF2ops for u8 {
+impl Coeff for u8 {
     const ZERO: Self = 0;
+}
+
+mod private {
+    pub trait Sealed {}
+
+    impl Sealed for super::Block {}
+    impl Sealed for u8 {}
 }

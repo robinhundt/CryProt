@@ -3,6 +3,9 @@ edition = "2021"
 name = "cryprot-codes"
 version = "0.1.0"
 
+[features]
+libote-compat = ["dep:libote-codes"]
+bench-libote = ["dep:libote-codes"]
 
 [lib]
 bench = false
@@ -14,12 +17,12 @@ cpufeatures.workspace = true
 cryprot-core.workspace = true
 fastdivide.workspace = true
 hybrid-array = { workspace = true }
+libote-codes = { git = "https://github.com/robinhundt/libote-codes.git", optional = true }
 rand.workspace = true
 seq-macro.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-libote = { path = "../../SEEC/libs/libote-rs" }
 
 [[bench]]
 harness = false

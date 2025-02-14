@@ -2,7 +2,7 @@ use cryprot_core::Block;
 use seq_macro::seq;
 
 use super::expander_modd::ExpanderModd;
-use crate::GF2ops;
+use crate::Coeff;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExpanderCode {
@@ -34,7 +34,45 @@ impl ExpanderCode {
         }
     }
 
-    pub(crate) fn expand<T: GF2ops>(&self, inp: &[T], out: &mut [T]) {
+    pub(crate) fn expand<T: Coeff>(&self, inp: &[T], out: &mut [T]) {
+        #[cfg(not(feature = "libote-compat"))]
+        self.expand_simple(inp, out);
+        #[cfg(feature = "libote-compat")]
+        self.expand_libote(inp, out);
+    }
+
+    #[cfg(not(feature = "libote-compat"))]
+    fn expand_simple<T: Coeff>(&self, inp: &[T], out: &mut [T]) {
+        let mut uni = self.expander_weight;
+        let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
+        let mut reg_gen = if self.regular {
+            uni = self.expander_weight / 2;
+            let reg = self.expander_weight - uni;
+            let step = self.code_size / reg;
+            let reg_gen =
+                ExpanderModd::new(self.seed ^ Block::from([23421341, 342342134]), step as u64);
+            Some((reg_gen, reg, step))
+        } else {
+            None
+        };
+
+        for out in out.iter_mut() {
+            if let Some((ref mut reg_gen, reg, step)) = reg_gen {
+                for j in 0..reg {
+                    *out ^= inp[reg_gen.get() + j * step];
+                }
+            }
+
+            for _ in 0..uni {
+                *out ^= inp[uni_gen.get()];
+            }
+        }
+    }
+
+    #[cfg(feature = "libote-compat")]
+    // Preserves compatability with libote for testing purposes. expand_simple is
+    // simpler and faster
+    fn expand_libote<T: Coeff>(&self, inp: &[T], out: &mut [T]) {
         let mut uni = self.expander_weight;
         let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
         let mut reg_gen = if self.regular {
@@ -89,36 +127,7 @@ impl ExpanderCode {
             }
         }
     }
-
-    pub(crate) fn expand_simple<T: GF2ops>(&self, inp: &[T], out: &mut [T]) {
-        let mut uni = self.expander_weight;
-        let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
-        let mut reg_gen = if self.regular {
-            uni = self.expander_weight / 2;
-            let reg = self.expander_weight - uni;
-            let step = self.code_size / reg;
-            let reg_gen =
-                ExpanderModd::new(self.seed ^ Block::from([23421341, 342342134]), step as u64);
-            Some((reg_gen, reg, step))
-        } else {
-            None
-        };
-    
-        for out in out.iter_mut() {
-            if let Some((ref mut reg_gen, reg, step)) = reg_gen {
-                for j in 0..reg {
-                    *out ^= inp[reg_gen.get() + j * step];
-                }
-            }
-    
-            for _ in 0..uni {
-                *out ^= inp[uni_gen.get()];
-            }
-        }
-    }
-
-}    
-
+}
 
 #[cfg(test)]
 mod tests {

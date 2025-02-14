@@ -1,8 +1,8 @@
 use bytemuck::cast_slice_mut;
-use criterion::{criterion_group, criterion_main, BenchmarkGroup, Criterion};
-use rand::{thread_rng, RngCore};
-use cryprot_codes::ex_conv::{ExConvCode, ExConvCodeConfig};
+use criterion::{criterion_group, criterion_main, Criterion};
+use cryprot_codes::ex_conv::ExConvCode;
 use cryprot_core::{buf::Buf, Block};
+use rand::{thread_rng, RngCore};
 
 fn criterion_benchmark(c: &mut Criterion) {
     {
@@ -32,7 +32,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     }
 
+    #[cfg(feature = "bench-libote")]
     {
+        use cryprot_codes::ex_conv::ExConvCodeConfig;
+
         let mut g = c.benchmark_group("ex conv libote");
         let default_conf = ExConvCodeConfig::default();
 
@@ -40,7 +43,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let num_ots = 2_usize.pow(power);
         let mut data: Vec<Block> = Vec::zeroed(num_ots * 2);
         thread_rng().fill_bytes(cast_slice_mut(&mut data));
-        let mut libote_code = libote::ExConvCode::new(
+        let mut libote_code = libote_codes::ExConvCode::new(
             num_ots as u64,
             (num_ots * 2) as u64,
             default_conf.expander_weight as u64,
@@ -56,7 +59,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let num_ots = 2_usize.pow(power);
         let mut data: Vec<Block> = Vec::zeroed(num_ots * 2);
         thread_rng().fill_bytes(cast_slice_mut(&mut data));
-        let mut libote_code = libote::ExConvCode::new(
+        let mut libote_code = libote_codes::ExConvCode::new(
             num_ots as u64,
             (num_ots * 2) as u64,
             default_conf.expander_weight as u64,

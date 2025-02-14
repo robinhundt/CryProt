@@ -11,7 +11,6 @@ use crate::Coeff;
 mod expander;
 mod expander_modd;
 mod fast_aes_rng;
-mod gf128;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExConvCode {
@@ -55,7 +54,6 @@ impl ExConvCode {
             conf.code_size = 2 * message_size;
         }
         let expander = ExpanderCode::new(
-            message_size,
             conf.code_size - message_size,
             conf.expander_weight,
             conf.regular_expander,

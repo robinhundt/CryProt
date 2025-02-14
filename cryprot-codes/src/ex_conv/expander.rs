@@ -1,5 +1,4 @@
 use cryprot_core::Block;
-use seq_macro::seq;
 
 use super::expander_modd::ExpanderModd;
 use crate::Coeff;
@@ -8,8 +7,6 @@ use crate::Coeff;
 pub(crate) struct ExpanderCode {
     // the seed that generates the code.
     seed: Block,
-    // The message size of the code. K.
-    message_size: usize,
     // The codeword size of the code. n.
     code_size: usize,
     // The row weight of the B matrix.
@@ -19,7 +16,6 @@ pub(crate) struct ExpanderCode {
 
 impl ExpanderCode {
     pub(crate) fn new(
-        message_size: usize,
         code_size: usize,
         expander_weight: usize,
         regular_expander: bool,
@@ -27,7 +23,6 @@ impl ExpanderCode {
     ) -> Self {
         Self {
             seed,
-            message_size,
             code_size,
             expander_weight,
             regular: regular_expander,
@@ -73,6 +68,8 @@ impl ExpanderCode {
     // Preserves compatability with libote for testing purposes. expand_simple is
     // simpler and faster
     fn expand_libote<T: Coeff>(&self, inp: &[T], out: &mut [T]) {
+        use seq_macro::seq;
+
         let mut uni = self.expander_weight;
         let mut uni_gen = ExpanderModd::new(self.seed, self.code_size as u64);
         let mut reg_gen = if self.regular {
@@ -143,7 +140,7 @@ mod tests {
     fn test_basic_expansion() {
         // Test case 1: Basic expansion with regular expander
         let seed = Block::from([123456789, 987654321]);
-        let code = ExpanderCode::new(16, 32, 4, true, seed);
+        let code = ExpanderCode::new(32, 4, true, seed);
 
         let mut input = vec![Block::ZERO; 32];
         StdRng::seed_from_u64(2342).fill_bytes(cast_slice_mut(&mut input));
@@ -163,7 +160,7 @@ mod tests {
     fn test_irregular_expander() {
         // Test case 2: Expansion with irregular expander
         let seed = Block::from([111111111, 222222222]);
-        let code = ExpanderCode::new(8, 16, 3, false, seed);
+        let code = ExpanderCode::new(16, 3, false, seed);
 
         let mut input = vec![Block::ZERO; 16];
         StdRng::seed_from_u64(2342).fill_bytes(cast_slice_mut(&mut input));

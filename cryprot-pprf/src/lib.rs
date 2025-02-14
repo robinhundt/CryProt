@@ -369,7 +369,7 @@ impl RegularPprfReceiver {
 
         while let Some(tree_grp) = rx.next().await {
             let tree_grp = tree_grp.map_err(Error::Receive)?;
-            if let Err(_) = send.send(tree_grp) {
+            if send.send(tree_grp).is_err() {
                 // panic in the worker thread, so we break from receiving more data
                 break;
             }

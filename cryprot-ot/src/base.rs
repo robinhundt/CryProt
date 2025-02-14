@@ -12,7 +12,7 @@ use cryprot_net::{Connection, ConnectionError};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
-use crate::{phase, Connected, RotReceiver, RotSender};
+use crate::{phase, Connected, Malicious, RotReceiver, RotSender, SemiHonest};
 
 pub struct SimplestOt {
     rng: StdRng,
@@ -51,6 +51,10 @@ pub enum Error {
     #[error("seed commitment and seed hash not equal")]
     CommitmentHashesNotEqual,
 }
+
+impl SemiHonest for SimplestOt {}
+
+impl Malicious for SimplestOt {}
 
 impl RotSender for SimplestOt {
     type Error = Error;

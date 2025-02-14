@@ -1,8 +1,8 @@
-use std::future::Future;
+use std::{fmt::Debug, future::Future};
 
-use rand::{distributions, prelude::Distribution, rngs::StdRng, CryptoRng, Rng, SeedableRng};
 use cryprot_core::{buf::Buf, Block};
 use cryprot_net::Connection;
+use rand::{distributions, prelude::Distribution, rngs::StdRng, CryptoRng, Rng, SeedableRng};
 use subtle::Choice;
 
 pub mod adapter;
@@ -32,8 +32,8 @@ pub trait RotSender: Connected + Send {
     /// Store OTs in the provided [`Buf`]fer.
     ///
     /// For large number of OTs, using
-    /// [`HugePageMemory`](`cryprot_core::alloc::HugePageMemory`) can significantly
-    /// improve performance on Linux systems.
+    /// [`HugePageMemory`](`cryprot_core::alloc::HugePageMemory`) can
+    /// significantly improve performance on Linux systems.
     fn send_into(
         &mut self,
         ots: &mut impl Buf<[Block; 2]>,
@@ -96,6 +96,41 @@ impl<R: RotReceiver> RandChoiceRotReceiver for R {
         self.receive_into(&choices, ots).await?;
         Ok(choices)
     }
+}
+
+/// Marker trait for OT implementations secure against semi-honest adversaries.
+pub trait SemiHonest {}
+
+/// Marker trait for OT implementations secure against malicious adversaries.
+pub trait Malicious: SemiHonest {}
+
+/// Used to abstract over [`SemiHonestMarker`] or [`MaliciousMarker`]
+pub trait Security: Send + Sync + Debug + Copy + Clone + private::Sealed {
+    const MALICIOUS_SECURITY: bool;
+}
+
+/// Used as a marker type for semi-honest security OT implementation.
+#[derive(Copy, Clone, Debug)]
+pub struct SemiHonestMarker;
+
+impl Security for SemiHonestMarker {
+    const MALICIOUS_SECURITY: bool = false;
+}
+
+/// Used as a marker type for malicious security OT implementation.
+#[derive(Copy, Clone, Debug)]
+pub struct MaliciousMarker;
+
+impl Security for MaliciousMarker {
+    const MALICIOUS_SECURITY: bool = true;
+}
+
+mod private {
+    pub trait Sealed {}
+
+    impl Sealed for super::SemiHonestMarker {}
+
+    impl Sealed for super::MaliciousMarker {}
 }
 
 pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<Choice> {

@@ -74,7 +74,7 @@ fn bench_spawn_compute(c: &mut Criterion) {
     c.bench_function("spawn_compute overhead", |b| {
         b.to_async(&rt).iter(|| async {
             let jh = cryprot_core::tokio_rayon::spawn_compute(|| 42);
-            assert_eq!(42, jh.await);
+            assert_eq!(42, jh.await.unwrap());
         });
     });
 }

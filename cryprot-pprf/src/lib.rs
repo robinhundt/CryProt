@@ -201,7 +201,7 @@ impl RegularPprfSender {
             tx.send(tree_group).await.map_err(Error::Send)?;
         }
 
-        *out = jh.await;
+        *out = jh.await.expect("panic in worker thread");
         Ok(())
     }
 }
@@ -375,7 +375,7 @@ impl RegularPprfReceiver {
             }
         }
 
-        *out = jh.await;
+        *out = jh.await.expect("panic in worker thread");
         Ok(())
     }
 

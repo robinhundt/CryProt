@@ -96,7 +96,8 @@ impl SilentOtSender {
             }
             ots_buf
         })
-        .await;
+        .await
+        .expect("worker panic");
         *ots = ots_buf;
         Ok(())
     }
@@ -199,7 +200,8 @@ impl SilentOtReceiver {
             FIXED_KEY_HASH.cr_hash_slice_mut(&mut ots_buf);
             (ots_buf, choices)
         })
-        .await;
+        .await
+        .expect("worker panic");
         *ots = ots_buf;
         Ok(choices)
     }
@@ -364,6 +366,7 @@ impl Encoder {
             b
         })
         .await
+        .expect("worker panic")
     }
 
     async fn receive_compress<B: Buf<Block>>(
@@ -397,6 +400,7 @@ impl Encoder {
             (a, cb)
         })
         .await
+        .expect("worker panic")
     }
 }
 

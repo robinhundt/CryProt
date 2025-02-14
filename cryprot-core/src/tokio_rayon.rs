@@ -2,7 +2,7 @@ use std::{
     future::Future,
     panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
     thread,
 };
 
@@ -30,14 +30,15 @@ where
 }
 
 impl<T: Send + 'static> Future for TokioRayonJoinHandle<T> {
-    type Output = T;
+    type Output = thread::Result<T>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let rx = Pin::new(&mut self.rx);
-        let res = ready!(rx.poll(cx)).expect("oneshot::Sender is not dropped before send");
-        match res {
-            Ok(ret) => Poll::Ready(ret),
-            Err(err) => resume_unwind(err),
+        match rx.poll(cx) {
+            Poll::Ready(res) => {
+                Poll::Ready(res.expect("oneshot::Sender is not dropped before send"))
+            }
+            Poll::Pending => Poll::Pending,
         }
     }
 }

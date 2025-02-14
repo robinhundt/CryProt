@@ -1,6 +1,5 @@
-use std::{io, iter, mem};
+use std::{io, iter, mem, panic::resume_unwind};
 
-use rand::{rngs::StdRng, RngCore, SeedableRng};
 use cryprot_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
@@ -12,6 +11,7 @@ use cryprot_core::{
     Block,
 };
 use cryprot_net::{Connection, ConnectionError};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -214,17 +214,15 @@ impl RotSender for OtExtensionSender {
                 if ch_s.send(recv_row).is_err() {
                     // If we can't send on the channel, the channel must've been dropped due to a
                     // panic in the worker thread. So we try to join the comput task to resume the
-                    // panic
-                    let _ = jh.await;
-                    unreachable!(
-                        "send should fail because of panic which is propagated by jh.await"
-                    )
+                    // panic in the worker thread.
+                    resume_unwind(jh.await.map(drop).expect_err("expected thread error"));
                 };
             }
         }
 
         let (owned_ots, base_rngs, base_choices) = jh
             .await
+            .expect("worker panicked")
             .expect("compute task received all data so should return Some");
         self.base_rngs = base_rngs;
         self.base_choices = base_choices;
@@ -361,9 +359,7 @@ impl RotReceiver for OtExtensionReceiver {
             send.write_all(&row).await.map_err(Error::Send)?;
         }
 
-        let (owned_ots, base_rngs) = jh
-            .await
-            .expect("ch_r received all data, so thread completed");
+        let (owned_ots, base_rngs) = jh.await.expect("panic in worker thread").unwrap();
 
         self.base_rngs = base_rngs;
         *ots = owned_ots;
@@ -385,8 +381,8 @@ fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
 
-    use rand::{rngs::StdRng, SeedableRng};
     use cryprot_net::testing::{init_tracing, local_conn};
+    use rand::{rngs::StdRng, SeedableRng};
 
     use crate::{
         extension::{OtExtensionReceiver, OtExtensionSender, DEFAULT_OT_BATCH_SIZE},

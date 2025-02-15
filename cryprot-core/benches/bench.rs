@@ -1,13 +1,13 @@
-use std::arch::x86_64::_mm256_setzero_si256;
+use std::{arch::x86_64::_mm256_setzero_si256, mem::transmute};
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use rand::{thread_rng, RngCore};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use cryprot_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     buf::Buf,
     transpose::{avx2, portable},
 };
+use rand::{thread_rng, Rng, RngCore};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rows = 128;

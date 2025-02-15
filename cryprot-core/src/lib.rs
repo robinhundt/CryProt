@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "nightly", feature(test))]
+
 pub mod aes_hash;
 pub mod aes_rng;
 pub mod alloc;

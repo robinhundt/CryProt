@@ -11,6 +11,8 @@ use wide::u8x16;
 
 use crate::random_oracle::RandomOracle;
 
+pub mod gf128;
+
 /// A 128-bit block. Uses SIMD operations where available.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, Pod, Zeroable)]
 #[repr(transparent)]
@@ -285,10 +287,26 @@ impl From<std::arch::x86_64::__m128i> for Block {
 }
 
 #[cfg(target_arch = "x86_64")]
+impl From<&std::arch::x86_64::__m128i> for Block {
+    #[inline]
+    fn from(value: &std::arch::x86_64::__m128i) -> Self {
+        bytemuck::cast(*value)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
 impl From<Block> for std::arch::x86_64::__m128i {
     #[inline]
     fn from(value: Block) -> Self {
         bytemuck::cast(value)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl From<&Block> for std::arch::x86_64::__m128i {
+    #[inline]
+    fn from(value: &Block) -> Self {
+        bytemuck::cast(*value)
     }
 }
 

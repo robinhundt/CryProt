@@ -10,11 +10,13 @@ bench = false
 __testing = ["dep:tracing-subscriber"]
 num-traits = ["dep:num-traits"]
 tokio-rayon = ["dep:rayon", "dep:tokio"]
+nightly = []
 
 [dependencies]
 aes.workspace = true
 blake3 = { workspace = true, features = ["traits-preview"] }
 bytemuck = { workspace = true, features = ["derive"] }
+cpufeatures.workspace = true
 hybrid-array = { workspace = true }
 num-traits = { workspace = true, optional = true }
 rand.workspace = true

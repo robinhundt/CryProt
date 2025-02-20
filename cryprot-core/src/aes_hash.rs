@@ -85,7 +85,7 @@ impl AesHash {
         }
     }
 
-    pub fn tmmo_hash_slice_mut(&self, x: &mut [Block], mut tweak_fn: impl FnMut(usize) -> Block) {
+    pub fn tccr_hash_slice_mut(&self, x: &mut [Block], mut tweak_fn: impl FnMut(usize) -> Block) {
         let mut tmp = [aes::Block::default(); AES_PAR_BLOCKS];
         for (chunk_idx, chunk) in x.chunks_mut(AES_PAR_BLOCKS).enumerate() {
             self.aes

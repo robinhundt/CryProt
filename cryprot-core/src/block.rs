@@ -1,5 +1,6 @@
-use std::ops::{
-    Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, Shr,
+use std::{
+    fmt,
+    ops::{Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, Shr},
 };
 
 use aes::cipher::{self, array::sizes};
@@ -103,6 +104,29 @@ impl Block {
     #[inline]
     pub fn lsb(&self) -> bool {
         *self & Block::ONE == Block::ONE
+    }
+
+    #[inline]
+    pub fn bits(&self) -> impl Iterator<Item = bool> {
+        struct BitIter {
+            blk: Block,
+            idx: usize,
+        }
+        impl Iterator for BitIter {
+            type Item = bool;
+
+            #[inline]
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.idx < Block::BITS {
+                    self.idx += 1;
+                    let bit = (self.blk >> self.idx - 1) & Block::ONE != Block::ZERO;
+                    Some(bit)
+                } else {
+                    None
+                }
+            }
+        }
+        BitIter { blk: *self, idx: 0 }
     }
 }
 
@@ -333,6 +357,12 @@ impl Add for Block {
     }
 }
 
+impl fmt::Binary for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Binary::fmt(&u128::from(*self), f)
+    }
+}
+
 #[cfg(feature = "num-traits")]
 impl num_traits::Zero for Block {
     fn zero() -> Self {
@@ -389,5 +419,17 @@ mod tests {
     #[test]
     fn test_mask_lsb() {
         assert_eq!(Block::ONES ^ Block::ONE, Block::MASK_LSB);
+    }
+
+    #[test]
+    fn test_bits() {
+        let b: Block = 0b101_u128.into();
+        let mut iter = b.bits();
+        assert_eq!(Some(true), iter.next());
+        assert_eq!(Some(false), iter.next());
+        assert_eq!(Some(true), iter.next());
+        for rest in iter {
+            assert_eq!(false, rest);
+        }
     }
 }

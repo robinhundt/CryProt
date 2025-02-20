@@ -66,13 +66,13 @@ impl<S: RotSender + RandChoiceRotSender + Send> RotSender for ChosenChoice<S> {
 
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::StdRng, SeedableRng};
     use cryprot_net::testing::{init_tracing, local_conn};
+    use rand::{rngs::StdRng, SeedableRng};
 
     use crate::{
         adapter::ChosenChoice,
         random_choices,
-        silent_ot::{SilentOtReceiver, SilentOtSender},
+        silent_ot::{SemiHonestSilentOtReceiver, SemiHonestSilentOtSender},
         RotReceiver, RotSender,
     };
 
@@ -80,8 +80,8 @@ mod tests {
     async fn test_chosen_choice_adapter() {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
-        let mut sender = ChosenChoice::new(SilentOtSender::new(c1));
-        let mut receiver = ChosenChoice::new(SilentOtReceiver::new(c2));
+        let mut sender = ChosenChoice::new(SemiHonestSilentOtSender::new(c1));
+        let mut receiver = ChosenChoice::new(SemiHonestSilentOtReceiver::new(c2));
 
         let count = 2_usize.pow(10);
         let choices = random_choices(count, &mut StdRng::seed_from_u64(234));

@@ -1,31 +1,40 @@
 #![allow(non_snake_case)]
-use std::mem;
+use std::{io, marker::PhantomData, mem};
 
 use bytemuck::cast_slice_mut;
 use cryprot_codes::ex_conv::{ExConvCode, ExConvCodeConfig};
 use cryprot_core::{
-    aes_hash::FIXED_KEY_HASH, alloc::HugePageMemory, buf::Buf, tokio_rayon::spawn_compute, Block,
-    AES_PAR_BLOCKS,
+    aes_hash::FIXED_KEY_HASH, alloc::HugePageMemory, buf::Buf, random_oracle::Hash,
+    tokio_rayon::spawn_compute, Block, AES_PAR_BLOCKS,
 };
-use cryprot_net::Connection;
+use cryprot_net::{Connection, ConnectionError};
 use cryprot_pprf::{PprfConfig, RegularPprfReceiver, RegularPprfSender};
+use futures::{SinkExt, StreamExt};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use subtle::Choice;
 use tracing::Level;
 
 use crate::{
     extension::{self, OtExtensionReceiver, OtExtensionSender},
-    Connected, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver, RotSender,
-    SemiHonestMarker,
+    noisy_vole::{self, NoisyVoleReceiver, NoisyVoleSender},
+    Connected, Malicious, MaliciousMarker, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver,
+    RotSender, Security, SemiHonest, SemiHonestMarker,
 };
 
 pub const SECURITY_PARAMETER: usize = 128;
 const SCALER: usize = 2;
 
-pub struct SilentOtSender {
+pub type SemiHonestSilentOtSender = SilentOtSender<SemiHonestMarker>;
+pub type SemiHonestSilentOtReceiver = SilentOtReceiver<SemiHonestMarker>;
+
+pub type MaliciousSilentOtSender = SilentOtSender<MaliciousMarker>;
+pub type MaliciousSilentOtReceiver = SilentOtReceiver<MaliciousMarker>;
+
+pub struct SilentOtSender<S> {
     conn: Connection,
     ot_sender: OtExtensionSender<SemiHonestMarker>,
     rng: StdRng,
+    s: PhantomData<S>,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -48,15 +57,28 @@ pub enum Error {
     BaseOt(#[from] extension::Error),
     #[error("error in pprf expansion for silent OTs")]
     Pprf(#[from] cryprot_pprf::Error),
+    #[error("io error during malicious check")]
+    Io(#[from] io::Error),
+    #[error("error in connection to peer")]
+    Connection(#[from] ConnectionError),
+    #[error("error in noisy vole during malicious check")]
+    NoisyVole(#[from] noisy_vole::Error),
+    #[error("sender did not transmit hash in malicious check")]
+    MissingSenderHash,
+    #[error("receiver did not transmit seed in malicious check")]
+    MissingReceiverSeed,
+    #[error("malicious check failed")]
+    MaliciousCheck,
 }
 
-impl SilentOtSender {
+impl<S: Security> SilentOtSender<S> {
     pub fn new(mut conn: Connection) -> Self {
         let ot_sender = OtExtensionSender::new(conn.sub_connection());
         Self {
             conn,
             ot_sender,
             rng: StdRng::from_entropy(),
+            s: PhantomData,
         }
     }
 
@@ -128,10 +150,14 @@ impl SilentOtSender {
             "ots Buf not big enough. Allocate at least Self::ots_buf_size"
         );
 
-        let mut base_ots = self
-            .ot_sender
-            .send(pprf_conf.base_ot_count().next_multiple_of(128))
-            .await?;
+        let mal_check_ot_count = S::MALICIOUS_SECURITY as usize * SECURITY_PARAMETER;
+        let base_ot_count = pprf_conf.base_ot_count().next_multiple_of(128) + mal_check_ot_count;
+
+        // count must be divisable by 128 for ot_extension
+        let mut base_ots = self.ot_sender.send(base_ot_count).await?;
+
+        let mal_check_ots = base_ots.split_off(base_ot_count - mal_check_ot_count);
+
         base_ots.truncate(pprf_conf.base_ot_count());
 
         let pprf_sender =
@@ -141,25 +167,69 @@ impl SilentOtSender {
             .expand(delta, self.rng.gen(), conf.pprf_out_fmt(), &mut B)
             .await?;
 
+        if S::MALICIOUS_SECURITY {
+            self.ferret_mal_check(delta, &mut B, mal_check_ots).await?;
+        }
+
         let enc = Encoder::new(count, mult_type);
         *ots = enc.send_compress(B).await;
         Ok(())
     }
+
+    async fn ferret_mal_check(
+        &mut self,
+        delta: Block,
+        B: &mut impl Buf<Block>,
+        mal_check_ots: Vec<[Block; 2]>,
+    ) -> Result<(), Error> {
+        assert_eq!(SECURITY_PARAMETER, mal_check_ots.len());
+        let (mut tx, mut rx) = self.conn.request_response_stream().await?;
+        let mal_check_seed: Block = rx.next().await.ok_or(Error::MissingReceiverSeed)??;
+
+        let owned_B = mem::take(B);
+        let jh = spawn_compute(move || {
+            let mut xx = mal_check_seed;
+            let (sum_low, sum_high) = owned_B.iter().fold(
+                (Block::ZERO, Block::ZERO),
+                |(mut sum_low, mut sum_high), b| {
+                    let (low, high) = xx.clmul(b);
+                    sum_low ^= low;
+                    sum_high ^= high;
+                    xx = xx.gf_mul(&mal_check_seed);
+                    (sum_low, sum_high)
+                },
+            );
+            (Block::gf_reduce(&sum_low, &sum_high), owned_B)
+        });
+
+        let mut receiver = NoisyVoleReceiver::new(self.conn.sub_connection());
+        let a = receiver.receive(vec![delta], mal_check_ots).await?;
+
+        let (my_sum, owned_B) = jh.await.expect("worker panic");
+        *B = owned_B;
+
+        let my_hash = (my_sum ^ a[0]).ro_hash();
+        tx.send(my_hash).await?;
+
+        Ok(())
+    }
 }
 
-pub struct SilentOtReceiver {
+pub struct SilentOtReceiver<S> {
     conn: Connection,
     ot_receiver: OtExtensionReceiver<SemiHonestMarker>,
     rng: StdRng,
+    s: PhantomData<S>,
 }
 
-impl SilentOtReceiver {
+impl<S: Security> SilentOtReceiver<S> {
     pub fn new(mut conn: Connection) -> Self {
         let ot_receiver = OtExtensionReceiver::new(conn.sub_connection());
         Self {
             conn,
             ot_receiver,
             rng: StdRng::from_entropy(),
+            s: PhantomData,
         }
     }
 
@@ -184,7 +254,7 @@ impl SilentOtReceiver {
         count: usize,
         ots: &mut impl Buf<Block>,
     ) -> Result<Vec<Choice>, Error> {
-        self.correlated_receive_into(count, ChoiceBitPacking::Packed, ots)
+        self.internal_correlated_receive_into(count, ChoiceBitPacking::Packed, ots)
             .await?;
 
         let mut ots_buf = mem::take(ots);
@@ -211,17 +281,24 @@ impl SilentOtReceiver {
     pub async fn correlated_receive(
         &mut self,
         count: usize,
-        cb_packing: ChoiceBitPacking,
-    ) -> Result<(impl Buf<Block>, Option<Vec<Choice>>), Error> {
+    ) -> Result<(impl Buf<Block>, Vec<Choice>), Error> {
         let mut ots = HugePageMemory::zeroed(Self::ots_buf_size(count));
-        let choices = self
-            .correlated_receive_into(count, cb_packing, &mut ots)
-            .await?;
+        let choices = self.correlated_receive_into(count, &mut ots).await?;
         Ok((ots, choices))
     }
 
     #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_receive"))]
     pub async fn correlated_receive_into(
+        &mut self,
+        count: usize,
+        ots: &mut impl Buf<Block>,
+    ) -> Result<Vec<Choice>, Error> {
+        self.internal_correlated_receive_into(count, ChoiceBitPacking::NotPacked, ots)
+            .await
+            .map(|cb| cb.expect("not choice packed"))
+    }
+
+    async fn internal_correlated_receive_into(
         &mut self,
         count: usize,
         cb_packing: ChoiceBitPacking,
@@ -232,7 +309,9 @@ impl SilentOtReceiver {
         let pprf_conf = PprfConfig::from(conf);
         assert_eq!(ots.len(), pprf_conf.size());
 
-        let base_choices = RegularPprfReceiver::sample_choice_bits(pprf_conf, &mut self.rng);
+        let base_choices = pprf_conf.sample_choice_bits(&mut self.rng);
+        let noisy_points = pprf_conf.get_points(conf.pprf_out_fmt(), &base_choices);
+
         let mut base_choices_subtle: Vec<_> =
             base_choices.iter().copied().map(Choice::from).collect();
         // we will discard these base OTs so we simply set the choice to 0. The ot
@@ -243,7 +322,21 @@ impl SilentOtReceiver {
             Choice::from(0),
         );
 
+        let mut mal_check_seed = Block::ZERO;
+        let mut mal_check_x = Block::ZERO;
+        if S::MALICIOUS_SECURITY {
+            mal_check_seed = self.rng.gen();
+
+            for &p in &noisy_points {
+                mal_check_x ^= mal_check_seed.gf_pow(p as u64 + 1);
+            }
+            base_choices_subtle.extend(mal_check_x.bits().map(|b| Choice::from(b as u8)));
+        }
+
         let mut base_ots = self.ot_receiver.receive(&base_choices_subtle).await?;
+        let mal_check_ots = base_ots
+            .split_off(base_ots.len() - (S::MALICIOUS_SECURITY as usize * SECURITY_PARAMETER));
+
         base_ots.truncate(pprf_conf.base_ot_count());
 
         let pprf_receiver = RegularPprfReceiver::new_with_conf(
@@ -252,26 +345,80 @@ impl SilentOtReceiver {
             base_ots,
             base_choices,
         );
-        let noisy_points = pprf_receiver.get_points(conf.pprf_out_fmt());
         let mut A = mem::take(ots);
         pprf_receiver.expand(conf.pprf_out_fmt(), &mut A).await?;
+
+        if S::MALICIOUS_SECURITY {
+            self.ferret_mal_check(&mut A, mal_check_seed, mal_check_x, mal_check_ots)
+                .await?;
+        }
 
         let enc = Encoder::new(count, mult_type);
         let (A, choices) = enc.receive_compress(A, noisy_points, cb_packing).await;
         *ots = A;
         Ok(choices)
     }
+
+    async fn ferret_mal_check(
+        &mut self,
+        A: &mut impl Buf<Block>,
+        mal_check_seed: Block,
+        mal_check_x: Block,
+        mal_check_ots: Vec<Block>,
+    ) -> Result<(), Error> {
+        assert_eq!(SECURITY_PARAMETER, mal_check_ots.len());
+        let (mut tx, mut rx) = self.conn.request_response_stream().await?;
+        tx.send(mal_check_seed).await?;
+
+        let owned_A = mem::take(A);
+        let jh = spawn_compute(move || {
+            let mut xx = mal_check_seed;
+            let (sum_low, sum_high) = owned_A.iter().fold(
+                (Block::ZERO, Block::ZERO),
+                |(mut sum_low, mut sum_high), a| {
+                    let (low, high) = xx.clmul(a);
+                    sum_low ^= low;
+                    sum_high ^= high;
+                    xx = xx.gf_mul(&mal_check_seed);
+                    (sum_low, sum_high)
+                },
+            );
+            (Block::gf_reduce(&sum_low, &sum_high), owned_A)
+        });
+
+        let mut sender = NoisyVoleSender::new(self.conn.sub_connection());
+        let b = sender.send(1, mal_check_x, mal_check_ots).await?;
+
+        let (my_sum, owned_A) = jh.await.expect("worker panic");
+        *A = owned_A;
+
+        let my_hash = (my_sum ^ b[0]).ro_hash();
+
+        let their_hash: Hash = rx.next().await.ok_or(Error::MissingSenderHash)??;
+        if my_hash != their_hash {
+            return Err(Error::MaliciousCheck);
+        }
+        Ok(())
+    }
 }
 
-impl Connected for SilentOtSender {
+impl SemiHonest for SilentOtSender<SemiHonestMarker> {}
+impl SemiHonest for SilentOtReceiver<SemiHonestMarker> {}
+
+impl SemiHonest for SilentOtSender<MaliciousMarker> {}
+impl SemiHonest for SilentOtReceiver<MaliciousMarker> {}
+impl Malicious for SilentOtSender<MaliciousMarker> {}
+impl Malicious for SilentOtReceiver<MaliciousMarker> {}
+
+impl<S> Connected for SilentOtSender<S> {
     fn connection(&mut self) -> &mut Connection {
         &mut self.conn
     }
 }
 
-impl RandChoiceRotSender for SilentOtSender {}
+impl<S: Security> RandChoiceRotSender for SilentOtSender<S> {}
 
-impl RotSender for SilentOtSender {
+impl<S: Security> RotSender for SilentOtSender<S> {
     type Error = Error;
 
     async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
@@ -280,13 +427,13 @@ impl RotSender for SilentOtSender {
     }
 }
 
-impl Connected for SilentOtReceiver {
+impl<S> Connected for SilentOtReceiver<S> {
     fn connection(&mut self) -> &mut Connection {
         &mut self.conn
     }
 }
 
-impl RandChoiceRotReceiver for SilentOtReceiver {
+impl<S: Security> RandChoiceRotReceiver for SilentOtReceiver<S> {
     type Error = Error;
 
     async fn rand_choice_receive_into(
@@ -376,8 +523,8 @@ impl Encoder {
         noisy_points: Vec<usize>,
         cb_packing: ChoiceBitPacking,
     ) -> (B, Option<Vec<Choice>>) {
-        spawn_compute(move || {
-            let (mut a, mut cb) = if cb_packing == ChoiceBitPacking::Packed {
+        let jh = spawn_compute(move || {
+            let (mut a, cb) = if cb_packing == ChoiceBitPacking::Packed {
                 // Set lsb of noisy point idx to 1, all others to 0
                 let mask_lsb = Block::ONES ^ Block::ONE;
                 for block in a.iter_mut() {
@@ -391,17 +538,23 @@ impl Encoder {
                 self.code.dual_encode(&mut a[..self.code.conf().code_size]);
                 (a, None::<Vec<Choice>>)
             } else {
-                todo!()
+                self.code.dual_encode(&mut a[..self.code.conf().code_size]);
+                let mut choices = vec![0_u8; self.code.conf().code_size];
+                for idx in noisy_points {
+                    if idx < choices.len() {
+                        choices[idx] = 1;
+                    }
+                }
+                self.code.dual_encode(&mut choices);
+                let mut choices: Vec<_> = choices.into_iter().map(|c| Choice::from(c)).collect();
+                choices.truncate(self.code.message_size());
+                (a, Some(choices))
             };
 
             a.set_len(self.code.message_size());
-            if let Some(cb) = &mut cb {
-                cb.truncate(self.code.message_size());
-            }
             (a, cb)
-        })
-        .await
-        .expect("worker panic")
+        });
+        jh.await.expect("worker panic")
     }
 }
 
@@ -423,7 +576,10 @@ mod tests {
     use subtle::Choice;
 
     use crate::{
-        silent_ot::{ChoiceBitPacking, SilentOtReceiver, SilentOtSender},
+        silent_ot::{
+            MaliciousSilentOtReceiver, MaliciousSilentOtSender, SemiHonestSilentOtReceiver,
+            SemiHonestSilentOtSender,
+        },
         RandChoiceRotReceiver, RotSender,
     };
 
@@ -486,21 +642,21 @@ mod tests {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
 
-        let mut sender = SilentOtSender::new(c1);
-        let mut receiver = SilentOtReceiver::new(c2);
+        let mut sender = SemiHonestSilentOtSender::new(c1);
+        let mut receiver = SemiHonestSilentOtReceiver::new(c2);
         let delta = Block::ONES;
         let count = 2_usize.pow(11);
 
         let (s_ot, (r_ot, choices)) = tokio::try_join!(
             sender.correlated_send(count, delta),
-            receiver.correlated_receive(count, ChoiceBitPacking::Packed)
+            receiver.correlated_receive(count)
         )
         .unwrap();
 
         assert_eq!(s_ot.len(), count);
         assert_eq!(r_ot.len(), count);
 
-        check_correlated(&r_ot, &s_ot, choices.as_deref(), delta);
+        check_correlated(&r_ot, &s_ot, Some(&choices), delta);
     }
 
     #[tokio::test]
@@ -508,8 +664,8 @@ mod tests {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
 
-        let mut sender = SilentOtSender::new(c1);
-        let mut receiver = SilentOtReceiver::new(c2);
+        let mut sender = SemiHonestSilentOtSender::new(c1);
+        let mut receiver = SemiHonestSilentOtReceiver::new(c2);
         let count = 2_usize.pow(11);
 
         let (s_ot, (r_ot, choices)) =
@@ -523,14 +679,29 @@ mod tests {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
 
-        let mut sender = SilentOtSender::new(c1);
-        let mut receiver = SilentOtReceiver::new(c2);
+        let mut sender = SemiHonestSilentOtSender::new(c1);
+        let mut receiver = SemiHonestSilentOtReceiver::new(c2);
         let count = 2_usize.pow(11);
 
         let (s_ot, (r_ot, c)) =
             tokio::try_join!(sender.send(count), receiver.rand_choice_receive(count)).unwrap();
 
         check_random(count, &s_ot, &r_ot, &c);
+    }
+
+    #[tokio::test]
+    async fn test_malicious_silent_ot() {
+        let _g = init_tracing();
+        let (c1, c2) = local_conn().await.unwrap();
+
+        let mut sender = MaliciousSilentOtSender::new(c1);
+        let mut receiver = MaliciousSilentOtReceiver::new(c2);
+        let count = 2_usize.pow(11);
+
+        let (s_ot, (r_ot, choices)) =
+            tokio::try_join!(sender.random_send(count), receiver.random_receive(count)).unwrap();
+
+        check_random(count, &s_ot, &r_ot[..], &choices);
     }
 
     #[cfg(not(debug_assertions))]
@@ -541,8 +712,8 @@ mod tests {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
 
-        let mut sender = SilentOtSender::new(c1);
-        let mut receiver = SilentOtReceiver::new(c2);
+        let mut sender = SemiHonestSilentOtSender::new(c1);
+        let mut receiver = SemiHonestSilentOtReceiver::new(c2);
         let delta = Block::ONES;
         let count = 2_usize.pow(18);
 

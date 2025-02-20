@@ -270,7 +270,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
                 }
 
                 FIXED_KEY_HASH
-                    .tmmo_hash_slice_mut(cast_slice_mut(&mut ots), |idx| Block::from(idx / 2));
+                    .tccr_hash_slice_mut(cast_slice_mut(&mut ots), |idx| Block::from(idx / 2));
 
                 let q = Block::gf_reduce(&q1, &q2);
                 let received_x = kos_ch_r.recv()?;
@@ -334,6 +334,11 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
         Ok(())
     }
 }
+
+impl SemiHonest for OtExtensionReceiver<SemiHonestMarker> {}
+impl SemiHonest for OtExtensionReceiver<MaliciousMarker> {}
+
+impl Malicious for OtExtensionReceiver<MaliciousMarker> {}
 
 impl<S: Security> OtExtensionReceiver<S> {
     pub fn new(conn: Connection) -> Self {
@@ -507,7 +512,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                     t1 ^= ti1;
                     t2 ^= ti2;
                 }
-                FIXED_KEY_HASH.tmmo_hash_slice_mut(&mut ots, Block::from);
+                FIXED_KEY_HASH.tccr_hash_slice_mut(&mut ots, Block::from);
 
                 t1 = Block::gf_reduce(&t1, &t2);
 

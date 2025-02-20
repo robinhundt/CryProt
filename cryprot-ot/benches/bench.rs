@@ -13,7 +13,10 @@ use cryprot_ot::{
         SemiHonestOtExtensionSender,
     },
     random_choices,
-    silent_ot::{ChoiceBitPacking, SilentOtReceiver, SilentOtSender},
+    silent_ot::{
+        ChoiceBitPacking, MaliciousSilentOtReceiver, MaliciousSilentOtSender,
+        SemiHonestSilentOtReceiver, SemiHonestSilentOtSender, SilentOtReceiver, SilentOtSender,
+    },
     RotReceiver, RotSender,
 };
 use rand::{rngs::StdRng, SeedableRng};
@@ -231,8 +234,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move {
                 let mut duration = Duration::ZERO;
                 // setup not included in duration
-                let mut sender = SilentOtSender::new(c11);
-                let mut receiver = SilentOtReceiver::new(c22);
+                let mut sender = SemiHonestSilentOtSender::new(c11);
+                let mut receiver = SemiHonestSilentOtReceiver::new(c22);
                 for _ in 0..iters {
                     let now = Instant::now();
                     (sender, receiver) = tokio::try_join!(
@@ -242,7 +245,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         }),
                         tokio::spawn(async move {
                             receiver
-                                .correlated_receive(count, ChoiceBitPacking::Packed)
+                                .correlated_receive(count)
                                 .await
                                 .unwrap();
                             receiver
@@ -264,8 +267,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             async move {
                 let mut duration = Duration::ZERO;
                 // setup not included in duration
-                let mut sender = SilentOtSender::new(c11);
-                let mut receiver = SilentOtReceiver::new(c22);
+                let mut sender = SemiHonestSilentOtSender::new(c11);
+                let mut receiver = SemiHonestSilentOtReceiver::new(c22);
                 for _ in 0..iters {
                     let now = Instant::now();
                     (sender, receiver) = tokio::try_join!(
@@ -285,6 +288,37 @@ fn criterion_benchmark(c: &mut Criterion) {
             }
         })
     });
+
+    g.bench_function(format!("2**{p} malicious random extension OTs"), |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let c11 = c1.sub_connection();
+            let c22 = c2.sub_connection();
+
+            async move {
+                let mut duration = Duration::ZERO;
+                // setup not included in duration
+                let mut sender = MaliciousSilentOtSender::new(c11);
+                let mut receiver = MaliciousSilentOtReceiver::new(c22);
+                for _ in 0..iters {
+                    let now = Instant::now();
+                    (sender, receiver) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender.random_send(count).await.unwrap();
+                            sender
+                        }),
+                        tokio::spawn(async move {
+                            receiver.random_receive(count).await.unwrap();
+                            receiver
+                        })
+                    )
+                    .unwrap();
+                    duration += now.elapsed();
+                }
+                duration
+            }
+        })
+    });
+
     g.finish();
 }
 

@@ -1,10 +1,20 @@
+use std::io;
+
 use bitvec::{order::Lsb0, vec::BitVec};
 use bytemuck::{cast_slice, cast_slice_mut};
 use cryprot_core::{aes_rng::AesRng, buf::Buf, tokio_rayon::spawn_compute, Block};
-use cryprot_net::Connection;
+use cryprot_net::{Connection, ConnectionError};
 use rand::{Rng, SeedableRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("unable to establish sub connection")]
+    Connection(#[from] ConnectionError),
+    #[error("error in sending/receiving noisy vole data")]
+    Io(#[from] io::Error),
+}
 
 pub struct NoisyVoleSender {
     conn: Connection,
@@ -19,24 +29,30 @@ impl NoisyVoleSender {
     ///
     /// Operations are performed in GF(2^128). Note that the bits of `delta`
     /// must be equal to the choice bits for the passed base OTs.
-    pub async fn send(&mut self, size: usize, delta: Block, ots: Vec<Block>) -> Vec<Block> {
+    pub async fn send(
+        &mut self,
+        size: usize,
+        delta: Block,
+        ots: Vec<Block>,
+    ) -> Result<Vec<Block>, Error> {
         assert_eq!(Block::BITS, ots.len());
-        let mut b = vec![Block::ZERO; size];
-        let delta_arr = <[u64; 2]>::from(delta);
-        let xb: BitVec<u64, Lsb0> = BitVec::from_slice(&delta_arr);
-        let mut msg: Vec<Block> = Vec::zeroed(xb.len() * size);
-        let (_, mut rx) = self.conn.byte_stream().await.unwrap();
-        rx.read_exact(cast_slice_mut(&mut msg)).await.unwrap();
+        let mut msg: Vec<Block> = Vec::zeroed(Block::BITS * size);
+        let (_, mut rx) = self.conn.byte_stream().await?;
+        rx.read_exact(cast_slice_mut(&mut msg)).await?;
 
         let jh = spawn_compute(move || {
+            let mut b = vec![Block::ZERO; size];
+            let delta_arr = <[u64; 2]>::from(delta);
+            let xb: BitVec<u64, Lsb0> = BitVec::from_slice(&delta_arr);
             let mut k = 0;
             for (i, ot) in ots.iter().enumerate() {
                 let mut rng = AesRng::from_seed(*ot);
 
                 for bj in &mut b {
                     let mut tmp: Block = rng.gen();
+
                     tmp ^=
-                        Block::conditional_select(&msg[k], &Block::ZERO, Choice::from(xb[i] as u8));
+                        Block::conditional_select(&Block::ZERO, &msg[k], Choice::from(xb[i] as u8));
                     *bj ^= tmp;
                     k += 1;
                 }
@@ -44,7 +60,7 @@ impl NoisyVoleSender {
             b
         });
 
-        jh.await.expect("worker panic")
+        Ok(jh.await.expect("worker panic"))
     }
 }
 
@@ -62,32 +78,40 @@ impl NoisyVoleReceiver {
     /// Operations are performed in GF(2^128). Note that the bits of `delta` for
     /// the [`NoisyVoleSender`] must be equal to the choice bits for the
     /// passed base OTs.
-    pub async fn receive(&mut self, c: Vec<Block>, ots: Vec<[Block; 2]>) -> Vec<Block> {
-        let mut a = Vec::zeroed(c.len());
-        let mut msg: Vec<Block> = Vec::zeroed(ots.len() * a.len());
+    pub async fn receive(
+        &mut self,
+        c: Vec<Block>,
+        ots: Vec<[Block; 2]>,
+    ) -> Result<Vec<Block>, Error> {
+        let jh = spawn_compute(move || {
+            let mut a = Vec::zeroed(c.len());
+            let mut msg: Vec<Block> = Vec::zeroed(ots.len() * a.len());
 
-        let mut k = 0;
-        for (i, [ot0, ot1]) in ots.into_iter().enumerate() {
-            let mut rng = AesRng::from_seed(ot0);
-            let t1 = Block::ONE << i;
+            let mut k = 0;
+            for (i, [ot0, ot1]) in ots.into_iter().enumerate() {
+                let mut rng = AesRng::from_seed(ot0);
+                let t1 = Block::ONE << i;
 
-            for (aj, cj) in a.iter_mut().zip(c.iter()) {
-                msg[k] = rng.gen();
-                *aj ^= msg[k];
-                let t0 = t1.gf_mul(cj);
-                msg[k] ^= t0;
-                k += 1;
+                for (aj, cj) in a.iter_mut().zip(c.iter()) {
+                    msg[k] = rng.gen();
+                    *aj ^= msg[k];
+                    let t0 = t1.gf_mul(cj);
+                    msg[k] ^= t0;
+                    k += 1;
+                }
+
+                let mut rng = AesRng::from_seed(ot1);
+                for m in &mut msg[k - c.len()..k] {
+                    let t: Block = rng.gen();
+                    *m ^= t;
+                }
             }
-
-            let mut rng = AesRng::from_seed(ot1);
-            for m in &mut msg[k - c.len()..k] {
-                let t: Block = rng.gen();
-                *m ^= t;
-            }
-        }
-        let (mut tx, _) = self.conn.byte_stream().await.unwrap();
-        tx.write_all(cast_slice(&msg)).await.unwrap();
-        a
+            (msg, a)
+        });
+        let (mut tx, _) = self.conn.byte_stream().await?;
+        let (msg, a) = jh.await.expect("worker panic");
+        tx.write_all(cast_slice(&msg)).await?;
+        Ok(a)
     }
 }
 
@@ -119,10 +143,11 @@ mod tests {
         let size = 200;
         let mut c: Vec<_> = (0..size).map(|_| rng.gen()).collect();
 
-        let (mut b, a) = tokio::join!(
+        let (mut b, a) = tokio::try_join!(
             sender.send(size, delta, s_ots),
             receiver.receive(c.clone(), r_ots)
-        );
+        )
+        .unwrap();
 
         for ci in &mut c {
             *ci = ci.gf_mul(&delta);

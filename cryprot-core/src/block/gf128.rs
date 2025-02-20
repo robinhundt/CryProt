@@ -76,6 +76,21 @@ impl Block {
     pub fn gf_reduce(low: &Self, high: &Self) -> Self {
         scalar::gf128_reduce(low.into(), high.into()).into()
     }
+
+    #[inline]
+    pub fn gf_pow(&self, mut exp: u64) -> Block {
+        let mut s = Block::ONE;
+        let mut pow2 = *self;
+
+        while exp != 0 {
+            if exp & 1 != 0 {
+                s = s.gf_mul(&pow2);
+            }
+            pow2 = pow2.gf_mul(&pow2);
+            exp >>= 1;
+        }
+        s
+    }
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -452,7 +467,7 @@ mod scalar {
 /// Test that scalar implementation and clmul implementation produce the same
 /// results
 #[cfg(all(test, not(miri), target_feature = "pclmulqdq"))]
-mod tests {
+mod scalar_simd_tests {
     use std::mem::transmute;
 
     use rand::{thread_rng, Rng};
@@ -493,5 +508,19 @@ mod tests {
                 assert_eq!(scalar_res, transmute(clmul_res));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Block;
+
+    #[test]
+    fn test_gf_pow() {
+        let b: Block = 24646523424323_u128.into();
+        assert_eq!(Block::ONE, b.gf_pow(0));
+        assert_eq!(b, b.gf_pow(1));
+        assert_eq!(b.gf_mul(&b), b.gf_pow(2));
+        assert_eq!(b.gf_mul(&b.gf_mul(&b)), b.gf_pow(3));
     }
 }

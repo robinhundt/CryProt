@@ -5,7 +5,8 @@ use cryprot_core::{
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     buf::Buf,
-    transpose::{avx2, portable}, Block,
+    transpose::{avx2, portable},
+    Block,
 };
 use rand::{thread_rng, Rng, RngCore};
 
@@ -59,7 +60,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut buf = Vec::zeroed(4 * 1024_usize.pow(2));
     c.bench_function("tmmo_hash_slice_mut", |b| {
         b.iter(|| {
-            FIXED_KEY_HASH.tmmo_hash_slice_mut(&mut buf, |i| Block::from(i));
+            FIXED_KEY_HASH.tccr_hash_slice_mut(&mut buf, |i| Block::from(i));
         });
     });
 

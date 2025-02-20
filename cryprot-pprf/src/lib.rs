@@ -17,7 +17,7 @@ use cryprot_core::{
 };
 use cryprot_net::{Connection, ConnectionError};
 use futures::{SinkExt, StreamExt};
-use ndarray::Array2;
+use ndarray::{Array2, ArrayView2};
 use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
@@ -39,6 +39,7 @@ pub struct RegularPprfReceiver {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OutFormat {
     ByLeafIndex,
+    /// TODO: currently unimplemented
     ByTreeIndex,
     Interleaved,
 }
@@ -261,7 +262,12 @@ impl RegularPprfReceiver {
                 output.grow_zeroed(size);
             }
             let aes = create_fixed_aes();
-            let points = self.get_points(OutFormat::ByLeafIndex);
+            let points = self.conf.get_points(
+                OutFormat::ByLeafIndex,
+                self.base_choices
+                    .as_slice()
+                    .expect("array order is unchanged"),
+            );
             let depth = self.conf.depth();
             let pnt_count = self.conf.pnt_count();
             let domain = self.conf.domain();
@@ -377,43 +383,6 @@ impl RegularPprfReceiver {
 
         *out = jh.await.expect("panic in worker thread");
         Ok(())
-    }
-
-    pub fn get_points(&self, out_fmt: OutFormat) -> Vec<usize> {
-        match out_fmt {
-            OutFormat::Interleaved => {
-                let mut points = self.get_points(OutFormat::ByLeafIndex);
-                for (i, point) in points.iter_mut().enumerate() {
-                    *point = interleave_point(*point, i, self.conf.domain())
-                }
-                points
-            }
-            OutFormat::ByLeafIndex => self
-                .base_choices
-                .rows()
-                .into_iter()
-                .map(|choice_bits| {
-                    debug_assert_eq!(self.conf.depth(), choice_bits.len());
-                    let point = get_active_path(choice_bits.iter().copied());
-                    debug_assert!(point < self.conf.domain());
-                    point
-                })
-                .collect(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn sample_choice_bits<R: RngCore + CryptoRng>(conf: PprfConfig, rng: &mut R) -> Vec<u8> {
-        let mut choices = vec![0_u8; conf.pnt_count() * conf.depth()];
-        let dist = Uniform::new(0, conf.domain());
-        for choice in choices.chunks_exact_mut(conf.depth()) {
-            let mut idx = dist.sample(rng);
-            for choice_bit in choice {
-                *choice_bit = (idx & 1) as u8;
-                idx >>= 1;
-            }
-        }
-        choices
     }
 }
 
@@ -585,6 +554,48 @@ impl PprfConfig {
     pub fn size(&self) -> usize {
         self.domain() * self.pnt_count()
     }
+
+    pub fn sample_choice_bits<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Vec<u8> {
+        let mut choices = vec![0_u8; self.pnt_count() * self.depth()];
+        let dist = Uniform::new(0, self.domain());
+        for choice in choices.chunks_exact_mut(self.depth()) {
+            let mut idx = dist.sample(rng);
+            for choice_bit in choice {
+                *choice_bit = (idx & 1) as u8;
+                idx >>= 1;
+            }
+        }
+        choices
+    }
+
+    pub fn get_points(&self, out_fmt: OutFormat, base_choices: &[u8]) -> Vec<usize> {
+        match out_fmt {
+            OutFormat::Interleaved => {
+                let mut points = self.get_points(OutFormat::ByLeafIndex, base_choices);
+                for (i, point) in points.iter_mut().enumerate() {
+                    *point = interleave_point(*point, i, self.domain())
+                }
+                points
+            }
+            OutFormat::ByLeafIndex => {
+                let base_choices =
+                    ArrayView2::from_shape([self.pnt_count(), self.depth()], base_choices)
+                        .expect("base_choices has wrong size for this conf");
+
+                base_choices
+                    .rows()
+                    .into_iter()
+                    .map(|choice_bits| {
+                        debug_assert_eq!(self.depth(), choice_bits.len());
+                        let point = get_active_path(choice_bits.iter().copied());
+                        debug_assert!(point < self.domain());
+                        point
+                    })
+                    .collect()
+            }
+            _ => todo!(),
+        }
+    }
 }
 
 /// Intended for testing. Generated suitable OTs and choice bits for a pprf
@@ -595,7 +606,7 @@ pub fn fake_base<R: RngCore + CryptoRng>(
 ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
     let base_ot_count = conf.base_ot_count();
     let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
-    let choices = RegularPprfReceiver::sample_choice_bits(conf, rng);
+    let choices = conf.sample_choice_bits(rng);
     let msg = msg2
         .iter()
         .zip(choices.iter())
@@ -622,11 +633,11 @@ mod tests {
 
         let (c1, c2) = local_conn().await.unwrap();
         let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
+        let points = conf.get_points(out_fmt, &base_choices);
 
         let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
         let receiver =
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
-        let points = receiver.get_points(out_fmt);
         eprintln!("{points:?}");
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
@@ -662,6 +673,7 @@ mod tests {
 
         let (c1, c2) = local_conn().await.unwrap();
         let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
+        let points = conf.get_points(out_fmt, &base_choices);
 
         // Print the base OTs to see correlation
         // println!("Sender base OTs: {:?}", sender_base_ots);
@@ -671,7 +683,6 @@ mod tests {
         let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
         let receiver =
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
-        let points = receiver.get_points(out_fmt);
         println!("Points: {:?}", points);
         let mut s_out = Vec::zeroed(conf.size());
         let mut r_out = Vec::zeroed(conf.size());
@@ -699,11 +710,11 @@ mod tests {
 
         let (c1, c2) = local_conn().await.unwrap();
         let (sender_base_ots, receiver_base_ots, base_choices) = fake_base(conf, &mut rng);
+        let points = conf.get_points(out_fmt, &base_choices);
 
         let sender = RegularPprfSender::new_with_conf(c1, conf, sender_base_ots);
         let receiver =
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
-        let points = receiver.get_points(out_fmt);
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
         let seed = rng.gen();

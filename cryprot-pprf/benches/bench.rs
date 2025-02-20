@@ -46,7 +46,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 );
                 let out1 = HugePageMemory::zeroed(conf.size());
                 let out2 = HugePageMemory::zeroed(conf.size());
-                let seed = rng.r#gen();
+                let seed = rng.random();
                 (sender, receiver, seed, out1, out2)
             },
             |(sender, receiver, seed, mut out1, mut out2)| async move {

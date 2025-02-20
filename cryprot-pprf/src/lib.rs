@@ -18,7 +18,7 @@ use cryprot_core::{
 use cryprot_net::{Connection, ConnectionError};
 use futures::{SinkExt, StreamExt};
 use ndarray::{Array2, ArrayView2};
-use rand::{CryptoRng, Rng, RngCore, SeedableRng, distributions::Uniform, prelude::Distribution};
+use rand::{CryptoRng, Rng, RngCore, SeedableRng, distr::Uniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::Level;
@@ -557,7 +557,7 @@ impl PprfConfig {
 
     pub fn sample_choice_bits<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Vec<u8> {
         let mut choices = vec![0_u8; self.pnt_count() * self.depth()];
-        let dist = Uniform::new(0, self.domain());
+        let dist = Uniform::new(0, self.domain()).expect("correct range");
         for choice in choices.chunks_exact_mut(self.depth()) {
             let mut idx = dist.sample(rng);
             for choice_bit in choice {
@@ -605,7 +605,7 @@ pub fn fake_base<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
     let base_ot_count = conf.base_ot_count();
-    let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.r#gen()).collect();
+    let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.random()).collect();
     let choices = conf.sample_choice_bits(rng);
     let msg = msg2
         .iter()
@@ -641,7 +641,7 @@ mod tests {
         eprintln!("{points:?}");
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
-        let seed = rng.r#gen();
+        let seed = rng.random();
         tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
@@ -686,7 +686,7 @@ mod tests {
         println!("Points: {:?}", points);
         let mut s_out = Vec::zeroed(conf.size());
         let mut r_out = Vec::zeroed(conf.size());
-        let seed = rng.r#gen();
+        let seed = rng.random();
         tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
@@ -717,7 +717,7 @@ mod tests {
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
-        let seed = rng.r#gen();
+        let seed = rng.random();
         tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)

@@ -49,7 +49,7 @@ impl NoisyVoleSender {
                 let mut rng = AesRng::from_seed(*ot);
 
                 for bj in &mut b {
-                    let mut tmp: Block = rng.r#gen();
+                    let mut tmp: Block = rng.random();
 
                     tmp ^=
                         Block::conditional_select(&Block::ZERO, &msg[k], Choice::from(xb[i] as u8));
@@ -93,7 +93,7 @@ impl NoisyVoleReceiver {
                 let t1 = Block::ONE << i;
 
                 for (aj, cj) in a.iter_mut().zip(c.iter()) {
-                    msg[k] = rng.r#gen();
+                    msg[k] = rng.random();
                     *aj ^= msg[k];
                     let t0 = t1.gf_mul(cj);
                     msg[k] ^= t0;
@@ -102,7 +102,7 @@ impl NoisyVoleReceiver {
 
                 let mut rng = AesRng::from_seed(ot1);
                 for m in &mut msg[k - c.len()..k] {
-                    let t: Block = rng.r#gen();
+                    let t: Block = rng.random();
                     *m ^= t;
                 }
             }
@@ -131,8 +131,8 @@ mod tests {
         let mut sender = NoisyVoleSender::new(c1);
         let mut receiver = NoisyVoleReceiver::new(c2);
         let mut rng = StdRng::seed_from_u64(423423);
-        let r_ots: Vec<[Block; 2]> = (0..128).map(|_| rng.r#gen()).collect();
-        let delta: Block = rng.r#gen();
+        let r_ots: Vec<[Block; 2]> = (0..128).map(|_| rng.random()).collect();
+        let delta: Block = rng.random();
         let choice = BitSlice::<_, Lsb0>::from_slice(delta.as_bytes());
         let s_ots: Vec<_> = r_ots
             .iter()
@@ -141,7 +141,7 @@ mod tests {
             .collect();
 
         let size = 200;
-        let mut c: Vec<_> = (0..size).map(|_| rng.r#gen()).collect();
+        let mut c: Vec<_> = (0..size).map(|_| rng.random()).collect();
 
         let (mut b, a) = tokio::try_join!(
             sender.send(size, delta, s_ots),

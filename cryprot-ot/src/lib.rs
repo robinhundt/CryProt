@@ -1,8 +1,8 @@
 use std::{fmt::Debug, future::Future};
 
-use cryprot_core::{buf::Buf, Block};
+use cryprot_core::{Block, buf::Buf};
 use cryprot_net::Connection;
-use rand::{distributions, prelude::Distribution, rngs::StdRng, CryptoRng, Rng, SeedableRng};
+use rand::{CryptoRng, Rng, SeedableRng, distr, prelude::Distribution, rngs::StdRng};
 use subtle::Choice;
 
 pub mod adapter;
@@ -93,7 +93,7 @@ impl<R: RotReceiver> RandChoiceRotReceiver for R {
         &mut self,
         ots: &mut impl Buf<Block>,
     ) -> Result<Vec<Choice>, Self::Error> {
-        let choices = random_choices(ots.len(), &mut StdRng::from_entropy());
+        let choices = random_choices(ots.len(), &mut StdRng::from_os_rng());
         self.receive_into(&choices, ots).await?;
         Ok(choices)
     }
@@ -135,7 +135,7 @@ mod private {
 }
 
 pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<Choice> {
-    let uniform = distributions::Uniform::new(0, 2);
+    let uniform = distr::Uniform::new(0, 2).expect("correct range");
     uniform
         .sample_iter(rng)
         .take(count)

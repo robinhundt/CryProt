@@ -8,8 +8,8 @@ use aes::Aes128;
 /// crate. Instead of using an own AES implementation, [`AesRng`](`AesRng`) uses
 /// the [aes](`aes`) crate.
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
-use rand::{CryptoRng, Error, Rng, RngCore, SeedableRng};
-use rand_core::block::{BlockRng, BlockRngCore};
+use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+use rand_core::block::{BlockRng, BlockRngCore, CryptoBlockRng};
 
 use crate::{AES_PAR_BLOCKS, Block};
 
@@ -50,11 +50,6 @@ impl RngCore for AesRng {
         // handle the tail
         self.0.fill_bytes(rest_bytes)
     }
-
-    #[inline]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
-        self.0.try_fill_bytes(dest)
-    }
 }
 
 impl SeedableRng for AesRng {
@@ -63,11 +58,6 @@ impl SeedableRng for AesRng {
     #[inline]
     fn from_seed(seed: Self::Seed) -> Self {
         AesRng(BlockRng::<AesRngCore>::from_seed(seed))
-    }
-
-    #[inline]
-    fn from_rng<R: RngCore>(rng: R) -> Result<Self, Error> {
-        BlockRng::<AesRngCore>::from_rng(rng).map(AesRng)
     }
 }
 
@@ -85,7 +75,7 @@ impl AesRng {
     /// Create a new RNG using a random seed from this one.
     #[inline]
     pub fn fork(&mut self) -> Self {
-        let seed = self.r#gen::<Block>();
+        let seed = self.random::<Block>();
         AesRng::from_seed(seed)
     }
 }
@@ -168,7 +158,7 @@ impl SeedableRng for AesRngCore {
     }
 }
 
-impl CryptoRng for AesRngCore {}
+impl CryptoBlockRng for AesRngCore {}
 
 impl From<AesRngCore> for AesRng {
     #[inline]
@@ -184,8 +174,8 @@ mod tests {
     #[test]
     fn test_generate() {
         let mut rng = AesRng::new();
-        let a = rng.r#gen::<[Block; 8]>();
-        let b = rng.r#gen::<[Block; 8]>();
+        let a = rng.random::<[Block; 8]>();
+        let b = rng.random::<[Block; 8]>();
         assert_ne!(a, b);
     }
 }

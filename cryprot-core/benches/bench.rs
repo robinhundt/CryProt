@@ -1,14 +1,14 @@
 use std::{arch::x86_64::_mm256_setzero_si256, mem::transmute};
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
 use cryprot_core::{
+    Block,
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     buf::Buf,
     transpose::{avx2, portable},
-    Block,
 };
-use rand::{thread_rng, Rng, RngCore};
+use rand::{Rng, RngCore, rng};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rows = 128;
@@ -18,7 +18,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut bitmat = vec![0; rows * cols];
-                thread_rng().fill_bytes(&mut bitmat);
+                rng().fill_bytes(&mut bitmat);
                 bitmat
             },
             |bitmat| portable::transpose_bitmatrix(&bitmat, &mut out, rows),
@@ -30,7 +30,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut bitmat = vec![0; rows * cols];
-                thread_rng().fill_bytes(&mut bitmat);
+                rng().fill_bytes(&mut bitmat);
                 bitmat
             },
             |bitmat| avx2::transpose_bitmatrix(&bitmat, &mut out, rows),
@@ -42,7 +42,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let mut bitmat = [unsafe { _mm256_setzero_si256() }; 64];
-                thread_rng().fill_bytes(&mut bytemuck::cast_slice_mut(&mut bitmat));
+                rng().fill_bytes(&mut bytemuck::cast_slice_mut(&mut bitmat));
                 bitmat
             },
             |mut bitmat| avx2::avx_transpose128x128(&mut bitmat),

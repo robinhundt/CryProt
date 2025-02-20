@@ -1,8 +1,8 @@
 use bytemuck::cast_slice_mut;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use cryprot_codes::ex_conv::ExConvCode;
-use cryprot_core::{buf::Buf, Block};
-use rand::{thread_rng, RngCore};
+use cryprot_core::{Block, buf::Buf};
+use rand::{RngCore, rng};
 
 fn criterion_benchmark(c: &mut Criterion) {
     {
@@ -12,7 +12,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let num_ots = 2_usize.pow(power);
         let code = ExConvCode::new(num_ots);
         let mut data: Vec<Block> = Vec::zeroed(code.conf().code_size);
-        thread_rng().fill_bytes(cast_slice_mut(&mut data));
+        rng().fill_bytes(cast_slice_mut(&mut data));
         g.bench_function(format!("dual_encode blocks msg_size=2**{power}"), |b| {
             b.iter(|| {
                 code.dual_encode(&mut data);
@@ -23,7 +23,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let num_ots = 2_usize.pow(power);
         let code = ExConvCode::new(num_ots);
         let mut data: Vec<Block> = Vec::zeroed(code.conf().code_size);
-        thread_rng().fill_bytes(cast_slice_mut(&mut data));
+        rng().fill_bytes(cast_slice_mut(&mut data));
         g.sample_size(10);
         g.bench_function(format!("dual_encode blocks msg_size=2**{power}"), |b| {
             b.iter(|| {
@@ -42,7 +42,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let power = 18;
         let num_ots = 2_usize.pow(power);
         let mut data: Vec<Block> = Vec::zeroed(num_ots * 2);
-        thread_rng().fill_bytes(cast_slice_mut(&mut data));
+        rng().fill_bytes(cast_slice_mut(&mut data));
         let mut libote_code = libote_codes::ExConvCode::new(
             num_ots as u64,
             (num_ots * 2) as u64,
@@ -58,7 +58,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         let power = 23;
         let num_ots = 2_usize.pow(power);
         let mut data: Vec<Block> = Vec::zeroed(num_ots * 2);
-        thread_rng().fill_bytes(cast_slice_mut(&mut data));
+        rng().fill_bytes(cast_slice_mut(&mut data));
         let mut libote_code = libote_codes::ExConvCode::new(
             num_ots as u64,
             (num_ots * 2) as u64,

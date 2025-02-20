@@ -1,9 +1,7 @@
 use std::io;
 
 use cryprot_core::{
-    Block,
-    buf::Buf,
-    random_oracle::{Hash, RandomOracle},
+    buf::Buf, rand_compat::RngCompat, random_oracle::{Hash, RandomOracle}, Block
 };
 use cryprot_net::{Connection, ConnectionError};
 use curve25519_dalek::{RistrettoPoint, Scalar, constants::RISTRETTO_BASEPOINT_TABLE};
@@ -21,7 +19,7 @@ pub struct SimplestOt {
 
 impl SimplestOt {
     pub fn new(connection: Connection) -> Self {
-        Self::new_with_rng(connection, StdRng::from_entropy())
+        Self::new_with_rng(connection, StdRng::from_os_rng())
     }
 
     pub fn new_with_rng(connection: Connection, rng: StdRng) -> SimplestOt {
@@ -64,9 +62,9 @@ impl RotSender for SimplestOt {
     #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
     async fn send_into(&mut self, ots: &mut impl Buf<[Block; 2]>) -> Result<(), Self::Error> {
         let count = ots.len();
-        let a = Scalar::random(&mut self.rng);
+        let a = Scalar::random(&mut RngCompat(&mut self.rng));
         let mut A = RISTRETTO_BASEPOINT_TABLE * &a;
-        let seed: Block = self.rng.r#gen();
+        let seed: Block = self.rng.random();
         // commit to the seed
         let seed_commitment = seed.ro_hash();
         let (mut send, mut recv) = self.conn.byte_stream().await?;
@@ -124,7 +122,7 @@ impl RotReceiver for SimplestOt {
         let (b_points, B_points): (Vec<_>, Vec<_>) = choices
             .iter()
             .map(|choice| {
-                let b = Scalar::random(&mut self.rng);
+                let b = Scalar::random(&mut RngCompat(&mut self.rng));
                 let B_0 = RISTRETTO_BASEPOINT_TABLE * &b;
                 let B_1 = B_0 + A;
                 let B_choice = RistrettoPoint::conditional_select(&B_0, &B_1, *choice);

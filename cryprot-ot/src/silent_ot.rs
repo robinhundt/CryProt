@@ -70,7 +70,7 @@ impl<S: Security> SilentOtSender<S> {
         Self {
             conn,
             ot_sender,
-            rng: StdRng::from_entropy(),
+            rng: StdRng::from_os_rng(),
             s: PhantomData,
         }
     }
@@ -94,7 +94,7 @@ impl<S: Security> SilentOtSender<S> {
         ots: &mut impl Buf<[Block; 2]>,
     ) -> Result<(), Error> {
         assert_eq!(count, ots.len());
-        let delta = self.rng.r#gen();
+        let delta = self.rng.random();
         let mut ots_buf = mem::take(ots);
         let correlated = self.correlated_send(count, delta).await?;
 
@@ -157,7 +157,7 @@ impl<S: Security> SilentOtSender<S> {
             RegularPprfSender::new_with_conf(self.conn.sub_connection(), pprf_conf, base_ots);
         let mut B = mem::take(ots);
         pprf_sender
-            .expand(delta, self.rng.r#gen(), conf.pprf_out_fmt(), &mut B)
+            .expand(delta, self.rng.random(), conf.pprf_out_fmt(), &mut B)
             .await?;
 
         if S::MALICIOUS_SECURITY {
@@ -221,7 +221,7 @@ impl<S: Security> SilentOtReceiver<S> {
         Self {
             conn,
             ot_receiver,
-            rng: StdRng::from_entropy(),
+            rng: StdRng::from_os_rng(),
             s: PhantomData,
         }
     }
@@ -318,7 +318,7 @@ impl<S: Security> SilentOtReceiver<S> {
         let mut mal_check_seed = Block::ZERO;
         let mut mal_check_x = Block::ZERO;
         if S::MALICIOUS_SECURITY {
-            mal_check_seed = self.rng.r#gen();
+            mal_check_seed = self.rng.random();
 
             for &p in &noisy_points {
                 mal_check_x ^= mal_check_seed.gf_pow(p as u64 + 1);

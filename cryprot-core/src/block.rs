@@ -5,7 +5,7 @@ use std::{
 
 use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use rand::{distr::StandardUniform, prelude::Distribution, Rng};
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 use wide::u8x16;
@@ -222,12 +222,18 @@ impl PartialEq for Block {
 
 impl Eq for Block {}
 
-impl Distribution<Block> for Standard {
+impl Distribution<Block> for StandardUniform {
     #[inline]
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Block {
         let mut bytes = [0; 16];
         rng.fill_bytes(&mut bytes);
         Block::new(bytes)
+    }
+}
+
+impl AsRef<[u8]> for Block {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
     }
 }
 

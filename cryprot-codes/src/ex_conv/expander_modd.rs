@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_expander_modd() {
-        let seed = StdRng::seed_from_u64(3454).r#gen();
+        let seed = StdRng::seed_from_u64(3454).random();
         let m = 100;
         let mut expander = ExpanderModd::new(seed, m as u64);
 
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_expander_modd_pow2() {
-        let seed = StdRng::seed_from_u64(3454).r#gen();
+        let seed = StdRng::seed_from_u64(3454).random();
         let m = 128; // Power of 2
         let mut expander = ExpanderModd::new(seed, m as u64);
 

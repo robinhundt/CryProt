@@ -27,6 +27,7 @@ hybrid-array = { workspace = true }
 num-traits = { workspace = true, optional = true }
 rand.workspace = true
 rand_core.workspace = true
+rand_core_0_6.workspace = true
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 subtle.workspace = true

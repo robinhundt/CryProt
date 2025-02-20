@@ -83,14 +83,11 @@ pub enum Error {
 
 impl<S: Security> OtExtensionSender<S> {
     pub fn new(conn: Connection) -> Self {
-        Self::new_with_rng(conn, StdRng::from_entropy())
+        Self::new_with_rng(conn, StdRng::from_os_rng())
     }
 
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
-        let base_ot = SimplestOt::new_with_rng(
-            conn.sub_connection(),
-            StdRng::from_rng(&mut rng).expect("infallible"),
-        );
+        let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
         Self {
             rng,
             base_ot,
@@ -188,7 +185,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
         let base_choices = mem::take(&mut self.base_choices);
         let mut batch_sizes_th = batch_sizes.clone();
         let owned_ots = mem::take(ots);
-        let mut rng = StdRng::from_rng(&mut self.rng).expect("infallible");
+        let mut rng = StdRng::from_rng(&mut self.rng);
 
         // spawn compute thread for CPU intensive work. This way we increase throughput
         // and don't risk of blocking tokio worker threads
@@ -251,7 +248,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
             }
 
             if S::MALICIOUS_SECURITY {
-                let my_seed: Block = rng.r#gen();
+                let my_seed: Block = rng.random();
                 kos_ch_s.send(my_seed)?;
                 let their_seed = kos_ch_r.recv()?;
                 if commit(their_seed) != their_seed_comm.expect("set at after base ots") {
@@ -264,7 +261,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
                 let mut q1 = Block::ZERO;
                 let mut q2 = Block::ZERO;
                 for [msg, _] in ots.iter_mut().chain(extra_messages.iter_mut()) {
-                    let challenge: Block = rng.r#gen();
+                    let challenge: Block = rng.random();
                     let (qi1, qi2) = msg.clmul(&challenge);
                     q1 ^= qi1;
                     q2 ^= qi2;
@@ -343,14 +340,11 @@ impl Malicious for OtExtensionReceiver<MaliciousMarker> {}
 
 impl<S: Security> OtExtensionReceiver<S> {
     pub fn new(conn: Connection) -> Self {
-        Self::new_with_rng(conn, StdRng::from_entropy())
+        Self::new_with_rng(conn, StdRng::from_os_rng())
     }
 
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
-        let base_ot = SimplestOt::new_with_rng(
-            conn.sub_connection(),
-            StdRng::from_rng(&mut rng).expect("infallible"),
-        );
+        let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
         Self {
             rng,
             base_ot,
@@ -429,7 +423,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
 
         let my_seed = if S::MALICIOUS_SECURITY {
             let (mut tx, _) = sub_conn.stream().await?;
-            let seed = self.rng.r#gen();
+            let seed = self.rng.random();
             tx.send(commit(seed)).await?;
             Some(seed)
         } else {
@@ -442,7 +436,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
         let (ch_s, mut ch_r) = mpsc::unbounded_channel::<Vec<u8>>();
         let (kos_ch_s, mut kos_ch_r_task) = tokio::sync::mpsc::unbounded_channel::<Block>();
         let (kos_ch_s_task, kos_ch_r) = std::sync::mpsc::channel::<Block>();
-        let mut rng = StdRng::from_rng(&mut self.rng).expect("infallible");
+        let mut rng = StdRng::from_rng(&mut self.rng);
 
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let owned_ots = mem::take(ots);
@@ -507,7 +501,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                     .zip(&choices.expect("set befor spawn_compute if malicious"))
                     .chain(extra_messages.iter_mut().zip(&extra_choices))
                 {
-                    let challenge: Block = rng.r#gen();
+                    let challenge: Block = rng.random();
                     x ^= challenge & zero_one[choice.unwrap_u8() as usize];
                     let (ti1, ti2) = msg.clmul(&challenge);
                     t1 ^= ti1;

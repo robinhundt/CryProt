@@ -230,18 +230,18 @@ mod clmul {
         use std::mem::transmute;
 
         use criterion::black_box;
-        use rand::{Rng, thread_rng};
+        use rand::{Rng, rng};
         use test::Bencher;
 
         #[bench]
         fn bench_gf128_mul(b: &mut Bencher) {
-            let [low, high] = unsafe { transmute(thread_rng().r#gen::<[u128; 2]>()) };
+            let [low, high] = unsafe { transmute(rng().random::<[u128; 2]>()) };
             b.iter(|| black_box(unsafe { super::gf128_mul(black_box(low), black_box(high)) }));
         }
 
         #[bench]
         fn bench_gf128_reduce(b: &mut Bencher) {
-            let [low, high] = unsafe { transmute(thread_rng().r#gen::<[u128; 2]>()) };
+            let [low, high] = unsafe { transmute(rng().random::<[u128; 2]>()) };
             b.iter(|| black_box(unsafe { super::gf128_reduce(black_box(low), black_box(high)) }));
         }
     }
@@ -449,18 +449,18 @@ mod scalar {
         extern crate test;
 
         use criterion::black_box;
-        use rand::{Rng, thread_rng};
+        use rand::{Rng, rng};
         use test::Bencher;
 
         #[bench]
         fn bench_gf128_mul(b: &mut Bencher) {
-            let [low, high] = thread_rng().r#gen::<[u128; 2]>();
+            let [low, high] = rng().random::<[u128; 2]>();
             b.iter(|| black_box(super::gf128_mul(black_box(low), black_box(high))));
         }
 
         #[bench]
         fn bench_gf128_reduce(b: &mut Bencher) {
-            let [low, high] = thread_rng().r#gen::<[u128; 2]>();
+            let [low, high] = rng().random::<[u128; 2]>();
             b.iter(|| black_box(super::gf128_reduce(black_box(low), black_box(high))));
         }
     }
@@ -472,14 +472,14 @@ mod scalar {
 mod scalar_simd_tests {
     use std::mem::transmute;
 
-    use rand::{Rng, thread_rng};
+    use rand::{Rng, rng};
 
     use super::{clmul, scalar};
 
     #[test]
     fn test_clmul128() {
         for _ in 0..1000 {
-            let (a, b) = thread_rng().r#gen::<(u128, u128)>();
+            let (a, b) = rng().random::<(u128, u128)>();
             unsafe {
                 let clmul_res = clmul::clmul128(transmute(a), transmute(b));
                 let scalar_res = scalar::clmul128(a, b);
@@ -491,7 +491,7 @@ mod scalar_simd_tests {
     #[test]
     fn test_gf128_reduce() {
         for _ in 0..1000 {
-            let (a, b) = thread_rng().r#gen::<(u128, u128)>();
+            let (a, b) = rng().random::<(u128, u128)>();
             unsafe {
                 let clmul_res = clmul::gf128_reduce(transmute(a), transmute(b));
                 let scalar_res = scalar::gf128_reduce(a, b);
@@ -503,7 +503,7 @@ mod scalar_simd_tests {
     #[test]
     fn test_gf128_mul() {
         for _ in 0..1000 {
-            let (a, b) = thread_rng().r#gen::<(u128, u128)>();
+            let (a, b) = rng().random::<(u128, u128)>();
             unsafe {
                 let clmul_res = clmul::gf128_mul(transmute(a), transmute(b));
                 let scalar_res = scalar::gf128_mul(a, b);

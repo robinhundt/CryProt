@@ -1,6 +1,6 @@
 use bytemuck::{cast_mut, cast_ref, cast_slice, cast_slice_mut};
-use rand::{RngCore, SeedableRng};
 use cryprot_core::{aes_rng::AesRng, Block};
+use rand::{RngCore, SeedableRng};
 
 // Simple PRNG implementation for the accumulator
 pub(crate) struct FastAesRng {

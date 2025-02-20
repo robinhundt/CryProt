@@ -14,8 +14,8 @@ use cryprot_ot::{
     },
     random_choices,
     silent_ot::{
-        ChoiceBitPacking, MaliciousSilentOtReceiver, MaliciousSilentOtSender,
-        SemiHonestSilentOtReceiver, SemiHonestSilentOtSender, SilentOtReceiver, SilentOtSender,
+        MaliciousSilentOtReceiver, MaliciousSilentOtSender, SemiHonestSilentOtReceiver,
+        SemiHonestSilentOtSender,
     },
     RotReceiver, RotSender,
 };
@@ -244,10 +244,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                             sender
                         }),
                         tokio::spawn(async move {
-                            receiver
-                                .correlated_receive(count)
-                                .await
-                                .unwrap();
+                            receiver.correlated_receive(count).await.unwrap();
                             receiver
                         })
                     )

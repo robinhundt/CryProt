@@ -8,9 +8,9 @@ use subtle::Choice;
 pub mod adapter;
 pub mod base;
 pub mod extension;
+pub mod noisy_vole;
 pub mod phase;
 pub mod silent_ot;
-pub mod noisy_vole;
 
 pub trait Connected {
     fn connection(&mut self) -> &mut Connection;

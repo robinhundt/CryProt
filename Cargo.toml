@@ -8,6 +8,11 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+authors = ["Robin Hundt"]
+homepage = "https://github.com/robinhundt/CryProt"
+repository = "https://github.com/robinhundt/CryProt"
+
 [workspace.dependencies]
 aes = "0.9.0-pre.2"
 anyhow = "1.0.86"

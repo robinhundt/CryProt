@@ -119,7 +119,7 @@ impl Block {
             fn next(&mut self) -> Option<Self::Item> {
                 if self.idx < Block::BITS {
                     self.idx += 1;
-                    let bit = (self.blk >> self.idx - 1) & Block::ONE != Block::ZERO;
+                    let bit = (self.blk >> (self.idx - 1)) & Block::ONE != Block::ZERO;
                     Some(bit)
                 } else {
                     None

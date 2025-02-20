@@ -1,8 +1,8 @@
 use std::mem::{self};
 
 use bytemuck::cast_slice_mut;
-use fastdivide::DividerU64;
 use cryprot_core::{utils::log2_ceil, Block};
+use fastdivide::DividerU64;
 
 use super::fast_aes_rng::FastAesRng;
 

@@ -44,13 +44,6 @@ pub enum MultType {
     ExConv21x24,
 }
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ChoiceBitPacking {
-    #[default]
-    Packed,
-    NotPacked,
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("unable to perform base OTs for silent OTs")]
@@ -447,6 +440,13 @@ impl<S: Security> RandChoiceRotReceiver for SilentOtReceiver<S> {
     }
 }
 
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+enum ChoiceBitPacking {
+    #[default]
+    Packed,
+    NotPacked,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Config {
     num_partitions: usize,
@@ -546,7 +546,7 @@ impl Encoder {
                     }
                 }
                 self.code.dual_encode(&mut choices);
-                let mut choices: Vec<_> = choices.into_iter().map(|c| Choice::from(c)).collect();
+                let mut choices: Vec<_> = choices.into_iter().map(Choice::from).collect();
                 choices.truncate(self.code.message_size());
                 (a, Some(choices))
             };

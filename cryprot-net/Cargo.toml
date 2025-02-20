@@ -1,7 +1,13 @@
 [package]
+description = "Networking library for cryptographic protocols built on QUIC."
 edition = "2021"
+keywords = ["quic", "networking"]
+license = "MIT"
 name = "cryprot-net"
 version = "0.1.0"
+
+authors.workspace = true
+repository.workspace = true
 
 [features]
 __testing = ["dep:anyhow", "metrics"]

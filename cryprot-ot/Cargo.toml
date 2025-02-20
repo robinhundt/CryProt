@@ -1,7 +1,13 @@
 [package]
+description = "Implementation of a Oblivious Transfer extension protocols."
 edition = "2021"
+keywords = ["iknp", "kos", "oblivious-transfer", "silent-ot", "simplest-ot"]
+license = "MIT"
 name = "cryprot-ot"
 version = "0.1.0"
+
+authors.workspace = true
+repository.workspace = true
 
 [lib]
 # https://bheisler.github.io/criterion.rs/book/faq.html#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options

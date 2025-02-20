@@ -269,7 +269,7 @@ mod tests {
     use bytemuck::cast_slice_mut;
     use cryprot_core::block::Block;
     #[cfg(feature = "libote-compat")]
-    use rand::{rngs::StdRng, SeedableRng, RngCore};
+    use rand::{rngs::StdRng, RngCore, SeedableRng};
 
     use super::*;
 

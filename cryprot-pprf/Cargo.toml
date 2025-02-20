@@ -1,7 +1,13 @@
 [package]
+description = "Implementation of a distributed PPRF for Silent OT"
 edition = "2021"
+license = "MIT"
+keywords = ["pprf", "mpc", "silent-ot"]
 name = "cryprot-pprf"
 version = "0.1.0"
+
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 aes.workspace = true

@@ -1,7 +1,13 @@
 [package]
+description = "Core primitives for cryptographic protocol implementations."
 edition = "2021"
+keywords = ["cryptography", "mpc"]
+license = "MIT"
 name = "cryprot-core"
 version = "0.1.0"
+
+authors.workspace = true
+repository.workspace = true
 
 [lib]
 bench = false

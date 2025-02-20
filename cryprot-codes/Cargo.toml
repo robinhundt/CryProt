@@ -1,11 +1,17 @@
 [package]
+description = "Linear codes for Silent OT."
 edition = "2021"
+keywords = ["expand-convolute"]
+license = "MIT"
 name = "cryprot-codes"
 version = "0.1.0"
 
+authors.workspace = true
+repository.workspace = true
+
 [features]
-libote-compat = ["dep:libote-codes"]
 bench-libote = ["dep:libote-codes"]
+libote-compat = ["dep:libote-codes"]
 
 [lib]
 bench = false

@@ -23,7 +23,7 @@ cpufeatures.workspace = true
 cryprot-core.workspace = true
 fastdivide.workspace = true
 hybrid-array = { workspace = true }
-libote-codes = { git = "https://github.com/robinhundt/libote-codes.git", optional = true }
+libote-codes = { version = "0.1.0", git = "https://github.com/robinhundt/libote-codes.git", optional = true }
 rand.workspace = true
 seq-macro.workspace = true
 

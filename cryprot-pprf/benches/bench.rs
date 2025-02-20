@@ -1,17 +1,17 @@
 use aes::{
-    cipher::{BlockCipherEncrypt, KeyInit},
     Aes128,
+    cipher::{BlockCipherEncrypt, KeyInit},
 };
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use cryprot_core::{
-    alloc::{allocate_zeroed_vec, HugePageMemory},
     Block,
+    alloc::{HugePageMemory, allocate_zeroed_vec},
 };
 use cryprot_net::testing::{init_bench_tracing, local_conn};
 use cryprot_pprf::{
-    fake_base, OutFormat, PprfConfig, RegularPprfReceiver, RegularPprfSender, PARALLEL_TREES,
+    OutFormat, PARALLEL_TREES, PprfConfig, RegularPprfReceiver, RegularPprfSender, fake_base,
 };
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use tokio::runtime::{self, Runtime};
 
 fn create_mt_runtime(threads: usize) -> Runtime {
@@ -46,7 +46,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 );
                 let out1 = HugePageMemory::zeroed(conf.size());
                 let out2 = HugePageMemory::zeroed(conf.size());
-                let seed = rng.gen();
+                let seed = rng.r#gen();
                 (sender, receiver, seed, out1, out2)
             },
             |(sender, receiver, seed, mut out1, mut out2)| async move {

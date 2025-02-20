@@ -2,6 +2,7 @@ use std::{io, iter, marker::PhantomData, mem, panic::resume_unwind, task::Poll};
 
 use bytemuck::cast_slice_mut;
 use cryprot_core::{
+    Block,
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     alloc::allocate_zeroed_vec,
@@ -10,11 +11,10 @@ use cryprot_core::{
     tokio_rayon::spawn_compute,
     transpose::transpose_bitmatrix,
     utils::{and_inplace_elem, xor_inplace},
-    Block,
 };
 use cryprot_net::{Connection, ConnectionError};
-use futures::{future::poll_fn, FutureExt, SinkExt, StreamExt};
-use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+use futures::{FutureExt, SinkExt, StreamExt, future::poll_fn};
+use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -23,9 +23,10 @@ use tokio::{
 use tracing::Level;
 
 use crate::{
+    Connected, Malicious, MaliciousMarker, RotReceiver, RotSender, Security, SemiHonest,
+    SemiHonestMarker,
     base::{self, SimplestOt},
-    phase, random_choices, Connected, Malicious, MaliciousMarker, RotReceiver, RotSender, Security,
-    SemiHonest, SemiHonestMarker,
+    phase, random_choices,
 };
 
 pub const BASE_OT_COUNT: usize = 128;
@@ -250,7 +251,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
             }
 
             if S::MALICIOUS_SECURITY {
-                let my_seed: Block = rng.gen();
+                let my_seed: Block = rng.r#gen();
                 kos_ch_s.send(my_seed)?;
                 let their_seed = kos_ch_r.recv()?;
                 if commit(their_seed) != their_seed_comm.expect("set at after base ots") {
@@ -263,7 +264,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
                 let mut q1 = Block::ZERO;
                 let mut q2 = Block::ZERO;
                 for [msg, _] in ots.iter_mut().chain(extra_messages.iter_mut()) {
-                    let challenge: Block = rng.gen();
+                    let challenge: Block = rng.r#gen();
                     let (qi1, qi2) = msg.clmul(&challenge);
                     q1 ^= qi1;
                     q2 ^= qi2;
@@ -428,7 +429,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
 
         let my_seed = if S::MALICIOUS_SECURITY {
             let (mut tx, _) = sub_conn.stream().await?;
-            let seed = self.rng.gen();
+            let seed = self.rng.r#gen();
             tx.send(commit(seed)).await?;
             Some(seed)
         } else {
@@ -506,7 +507,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                     .zip(&choices.expect("set befor spawn_compute if malicious"))
                     .chain(extra_messages.iter_mut().zip(&extra_choices))
                 {
-                    let challenge: Block = rng.gen();
+                    let challenge: Block = rng.r#gen();
                     x ^= challenge & zero_one[choice.unwrap_u8() as usize];
                     let (ti1, ti2) = msg.clmul(&challenge);
                     t1 ^= ti1;
@@ -606,14 +607,15 @@ impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
 mod tests {
 
     use cryprot_net::testing::{init_tracing, local_conn};
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
 
     use crate::{
+        MaliciousMarker, RotReceiver, RotSender,
         extension::{
-            OtExtensionReceiver, OtExtensionSender, SemiHonestOtExtensionReceiver,
-            SemiHonestOtExtensionSender, DEFAULT_OT_BATCH_SIZE,
+            DEFAULT_OT_BATCH_SIZE, OtExtensionReceiver, OtExtensionSender,
+            SemiHonestOtExtensionReceiver, SemiHonestOtExtensionSender,
         },
-        random_choices, MaliciousMarker, RotReceiver, RotSender,
+        random_choices,
     };
 
     #[tokio::test]

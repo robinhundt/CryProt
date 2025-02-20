@@ -503,7 +503,7 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
 name = "cryprot-codes"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "bytemuck",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "cryprot-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "blake3",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "cryprot-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "cryprot-ot"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bitvec",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "cryprot-pprf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes",
  "bytemuck",

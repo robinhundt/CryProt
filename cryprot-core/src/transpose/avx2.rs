@@ -38,14 +38,16 @@ unsafe fn avx_transpose_block_iter1(
     j: usize,
 ) {
     if j < (1 << block_size_shift) && block_size_shift == 6 {
-        let x = &mut *in_out.add(j / 2);
-        let y = &mut *in_out.add(j / 2 + 32);
+        unsafe {
+            let x = &mut *in_out.add(j / 2);
+            let y = &mut *in_out.add(j / 2 + 32);
 
-        let out_x = _mm256_unpacklo_epi64(*x, *y);
-        let out_y = _mm256_unpackhi_epi64(*x, *y);
-        *x = out_x;
-        *y = out_y;
-        return;
+            let out_x = _mm256_unpacklo_epi64(*x, *y);
+            let out_y = _mm256_unpackhi_epi64(*x, *y);
+            *x = out_x;
+            *y = out_y;
+            return;
+        }
     }
 
     if block_size_shift == 0 || block_size_shift >= 6 || block_rows_shift < 1 {
@@ -58,27 +60,29 @@ unsafe fn avx_transpose_block_iter1(
         mask ^= mask >> (1 << k);
     }
 
-    let x = &mut *in_out.add(j / 2);
-    let y = &mut *in_out.add(j / 2 + (1 << (block_size_shift - 1)));
+    unsafe {
+        let x = &mut *in_out.add(j / 2);
+        let y = &mut *in_out.add(j / 2 + (1 << (block_size_shift - 1)));
 
-    // Special case for 2x2 blocks (block_size_shift == 1)
-    if block_size_shift == 1 {
-        let u = _mm256_permute2x128_si256(*x, *y, 0x20);
-        let v = _mm256_permute2x128_si256(*x, *y, 0x31);
+        // Special case for 2x2 blocks (block_size_shift == 1)
+        if block_size_shift == 1 {
+            let u = _mm256_permute2x128_si256(*x, *y, 0x20);
+            let v = _mm256_permute2x128_si256(*x, *y, 0x31);
 
-        let mut diff = _mm256_xor_si256(u, _mm256_slli_epi16(v, 1));
-        diff = _mm256_and_si256(diff, _mm256_set1_epi16(0b1010101010101010_u16 as i16));
-        let u = _mm256_xor_si256(u, diff);
-        let v = _mm256_xor_si256(v, _mm256_srli_epi16(diff, 1));
+            let mut diff = _mm256_xor_si256(u, _mm256_slli_epi16(v, 1));
+            diff = _mm256_and_si256(diff, _mm256_set1_epi16(0b1010101010101010_u16 as i16));
+            let u = _mm256_xor_si256(u, diff);
+            let v = _mm256_xor_si256(v, _mm256_srli_epi16(diff, 1));
 
-        *x = _mm256_permute2x128_si256(u, v, 0x20);
-        *y = _mm256_permute2x128_si256(u, v, 0x31);
+            *x = _mm256_permute2x128_si256(u, v, 0x20);
+            *y = _mm256_permute2x128_si256(u, v, 0x31);
+        }
+
+        let mut diff = _mm256_xor_si256(*x, _mm256_slli_epi64_var_shift(*y, 1 << block_size_shift));
+        diff = _mm256_and_si256(diff, _mm256_set1_epi64x(mask as i64));
+        *x = _mm256_xor_si256(*x, diff);
+        *y = _mm256_xor_si256(*y, _mm256_srli_epi64_var_shift(diff, 1 << block_size_shift));
     }
-
-    let mut diff = _mm256_xor_si256(*x, _mm256_slli_epi64_var_shift(*y, 1 << block_size_shift));
-    diff = _mm256_and_si256(diff, _mm256_set1_epi64x(mask as i64));
-    *x = _mm256_xor_si256(*x, diff);
-    *y = _mm256_xor_si256(*y, _mm256_srli_epi64_var_shift(diff, 1 << block_size_shift));
 }
 
 #[inline(always)] // Process a range of rows in the matrix
@@ -92,7 +96,9 @@ unsafe fn avx_transpose_block_iter2(
 
     for i in (0..n_rows).step_by(mat_size) {
         for j in (0..(1 << block_size_shift)).step_by(1 << block_rows_shift) {
-            avx_transpose_block_iter1(in_out.add(i / 2), block_size_shift, block_rows_shift, j);
+            unsafe {
+                avx_transpose_block_iter1(in_out.add(i / 2), block_size_shift, block_rows_shift, j);
+            }
         }
     }
 }
@@ -111,16 +117,19 @@ unsafe fn avx_transpose_block(
 
     // Process current block size
     let total_rows = 1 << (mat_rows_shift + mat_size_shift);
-    avx_transpose_block_iter2(in_out, block_size_shift, block_rows_shift, total_rows);
 
-    // Recursively process larger blocks
-    avx_transpose_block(
-        in_out,
-        block_size_shift + 1,
-        mat_size_shift,
-        block_rows_shift,
-        mat_rows_shift,
-    );
+    unsafe {
+        avx_transpose_block_iter2(in_out, block_size_shift, block_rows_shift, total_rows);
+
+        // Recursively process larger blocks
+        avx_transpose_block(
+            in_out,
+            block_size_shift + 1,
+            mat_size_shift,
+            block_rows_shift,
+            mat_rows_shift,
+        );
+    }
 }
 
 const AVX_BLOCK_SHIFT: usize = 4;
@@ -205,7 +214,7 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
 mod tests {
     use std::arch::x86_64::_mm256_setzero_si256;
 
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
+    use rand::{RngCore, SeedableRng, rngs::StdRng};
 
     use super::{avx_transpose128x128, transpose_bitmatrix};
 

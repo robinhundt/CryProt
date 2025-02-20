@@ -1,5 +1,6 @@
 use std::mem;
 
+use aes::Aes128;
 /// RNG based on AES in CTR-like mode.
 ///
 /// This implementation is based on the implementation given in the
@@ -7,11 +8,10 @@ use std::mem;
 /// crate. Instead of using an own AES implementation, [`AesRng`](`AesRng`) uses
 /// the [aes](`aes`) crate.
 use aes::cipher::{BlockCipherEncrypt, KeyInit};
-use aes::Aes128;
 use rand::{CryptoRng, Error, Rng, RngCore, SeedableRng};
 use rand_core::block::{BlockRng, BlockRngCore};
 
-use crate::{Block, AES_PAR_BLOCKS};
+use crate::{AES_PAR_BLOCKS, Block};
 
 // TODO i think softspoken ot has some implementation performance optimizations
 // see sect 7 https://eprint.iacr.org/2022/192.pdf
@@ -85,7 +85,7 @@ impl AesRng {
     /// Create a new RNG using a random seed from this one.
     #[inline]
     pub fn fork(&mut self) -> Self {
-        let seed = self.gen::<Block>();
+        let seed = self.r#gen::<Block>();
         AesRng::from_seed(seed)
     }
 }
@@ -184,8 +184,8 @@ mod tests {
     #[test]
     fn test_generate() {
         let mut rng = AesRng::new();
-        let a = rng.gen::<[Block; 8]>();
-        let b = rng.gen::<[Block; 8]>();
+        let a = rng.r#gen::<[Block; 8]>();
+        let b = rng.r#gen::<[Block; 8]>();
         assert_ne!(a, b);
     }
 }

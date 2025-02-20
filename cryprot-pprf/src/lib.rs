@@ -2,23 +2,23 @@
 use std::{array, cmp::Ordering, io, mem};
 
 use aes::{
-    cipher::{BlockCipherEncrypt, KeyInit},
     Aes128,
+    cipher::{BlockCipherEncrypt, KeyInit},
 };
 use bytemuck::{cast_slice, cast_slice_mut};
 use cryprot_core::{
+    AES_PAR_BLOCKS, Block,
     aes_hash::FIXED_KEY_HASH,
     aes_rng::AesRng,
     alloc::allocate_zeroed_vec,
     buf::Buf,
     tokio_rayon::spawn_compute,
     utils::{log2_ceil, xor_inplace},
-    Block, AES_PAR_BLOCKS,
 };
 use cryprot_net::{Connection, ConnectionError};
 use futures::{SinkExt, StreamExt};
 use ndarray::{Array2, ArrayView2};
-use rand::{distributions::Uniform, prelude::Distribution, CryptoRng, Rng, RngCore, SeedableRng};
+use rand::{CryptoRng, Rng, RngCore, SeedableRng, distributions::Uniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::Level;
@@ -605,7 +605,7 @@ pub fn fake_base<R: RngCore + CryptoRng>(
     rng: &mut R,
 ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
     let base_ot_count = conf.base_ot_count();
-    let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.gen()).collect();
+    let msg2: Vec<[Block; 2]> = (0..base_ot_count).map(|_| rng.r#gen()).collect();
     let choices = conf.sample_choice_bits(rng);
     let msg = msg2
         .iter()
@@ -617,12 +617,12 @@ pub fn fake_base<R: RngCore + CryptoRng>(
 
 #[cfg(test)]
 mod tests {
-    use cryprot_core::{alloc::HugePageMemory, buf::Buf, utils::xor_inplace, Block};
+    use cryprot_core::{Block, alloc::HugePageMemory, buf::Buf, utils::xor_inplace};
     use cryprot_net::testing::local_conn;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
     use crate::{
-        fake_base, OutFormat, PprfConfig, RegularPprfReceiver, RegularPprfSender, PARALLEL_TREES,
+        OutFormat, PARALLEL_TREES, PprfConfig, RegularPprfReceiver, RegularPprfSender, fake_base,
     };
 
     #[tokio::test]
@@ -641,7 +641,7 @@ mod tests {
         eprintln!("{points:?}");
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
-        let seed = rng.gen();
+        let seed = rng.r#gen();
         tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
@@ -686,7 +686,7 @@ mod tests {
         println!("Points: {:?}", points);
         let mut s_out = Vec::zeroed(conf.size());
         let mut r_out = Vec::zeroed(conf.size());
-        let seed = rng.gen();
+        let seed = rng.r#gen();
         tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)
@@ -717,7 +717,7 @@ mod tests {
             RegularPprfReceiver::new_with_conf(c2, conf, receiver_base_ots, base_choices);
         let mut s_out = HugePageMemory::zeroed(conf.size());
         let mut r_out = HugePageMemory::zeroed(conf.size());
-        let seed = rng.gen();
+        let seed = rng.r#gen();
         tokio::try_join!(
             sender.expand(Block::ONES, seed, out_fmt, &mut s_out),
             receiver.expand(out_fmt, &mut r_out)

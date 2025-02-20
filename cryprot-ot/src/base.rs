@@ -1,18 +1,18 @@
 use std::io;
 
 use cryprot_core::{
+    Block,
     buf::Buf,
     random_oracle::{Hash, RandomOracle},
-    Block,
 };
 use cryprot_net::{Connection, ConnectionError};
-use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_TABLE, RistrettoPoint, Scalar};
+use curve25519_dalek::{RistrettoPoint, Scalar, constants::RISTRETTO_BASEPOINT_TABLE};
 use futures::{SinkExt, StreamExt};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
-use crate::{phase, Connected, Malicious, RotReceiver, RotSender, SemiHonest};
+use crate::{Connected, Malicious, RotReceiver, RotSender, SemiHonest, phase};
 
 pub struct SimplestOt {
     rng: StdRng,
@@ -66,7 +66,7 @@ impl RotSender for SimplestOt {
         let count = ots.len();
         let a = Scalar::random(&mut self.rng);
         let mut A = RISTRETTO_BASEPOINT_TABLE * &a;
-        let seed: Block = self.rng.gen();
+        let seed: Block = self.rng.r#gen();
         // commit to the seed
         let seed_commitment = seed.ro_hash();
         let (mut send, mut recv) = self.conn.byte_stream().await?;
@@ -167,10 +167,10 @@ fn ro_hash_point(point: &RistrettoPoint, tweak: usize, seed: Block) -> Block {
 mod tests {
     use anyhow::Result;
     use cryprot_net::testing::{init_tracing, local_conn};
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
 
     use super::SimplestOt;
-    use crate::{random_choices, RotReceiver, RotSender};
+    use crate::{RotReceiver, RotSender, random_choices};
 
     #[tokio::test]
     async fn base_rot() -> Result<()> {

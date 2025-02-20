@@ -1,7 +1,7 @@
 use std::mem::{self};
 
 use bytemuck::cast_slice_mut;
-use cryprot_core::{utils::log2_ceil, Block};
+use cryprot_core::{Block, utils::log2_ceil};
 use fastdivide::DividerU64;
 
 use super::fast_aes_rng::FastAesRng;
@@ -91,13 +91,13 @@ impl ExpanderModd {
 
 #[cfg(test)]
 mod tests {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+    use rand::{Rng, SeedableRng, rngs::StdRng};
 
     use super::*;
 
     #[test]
     fn test_expander_modd() {
-        let seed = StdRng::seed_from_u64(3454).gen();
+        let seed = StdRng::seed_from_u64(3454).r#gen();
         let m = 100;
         let mut expander = ExpanderModd::new(seed, m as u64);
 
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_expander_modd_pow2() {
-        let seed = StdRng::seed_from_u64(3454).gen();
+        let seed = StdRng::seed_from_u64(3454).r#gen();
         let m = 128; // Power of 2
         let mut expander = ExpanderModd::new(seed, m as u64);
 

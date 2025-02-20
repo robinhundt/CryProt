@@ -4,21 +4,21 @@ use std::{io, marker::PhantomData, mem};
 use bytemuck::cast_slice_mut;
 use cryprot_codes::ex_conv::{ExConvCode, ExConvCodeConfig};
 use cryprot_core::{
-    aes_hash::FIXED_KEY_HASH, alloc::HugePageMemory, buf::Buf, random_oracle::Hash,
-    tokio_rayon::spawn_compute, Block, AES_PAR_BLOCKS,
+    AES_PAR_BLOCKS, Block, aes_hash::FIXED_KEY_HASH, alloc::HugePageMemory, buf::Buf,
+    random_oracle::Hash, tokio_rayon::spawn_compute,
 };
 use cryprot_net::{Connection, ConnectionError};
 use cryprot_pprf::{PprfConfig, RegularPprfReceiver, RegularPprfSender};
 use futures::{SinkExt, StreamExt};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use subtle::Choice;
 use tracing::Level;
 
 use crate::{
-    extension::{self, OtExtensionReceiver, OtExtensionSender},
-    noisy_vole::{self, NoisyVoleReceiver, NoisyVoleSender},
     Connected, Malicious, MaliciousMarker, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver,
     RotSender, Security, SemiHonest, SemiHonestMarker,
+    extension::{self, OtExtensionReceiver, OtExtensionSender},
+    noisy_vole::{self, NoisyVoleReceiver, NoisyVoleSender},
 };
 
 pub const SECURITY_PARAMETER: usize = 128;
@@ -94,7 +94,7 @@ impl<S: Security> SilentOtSender<S> {
         ots: &mut impl Buf<[Block; 2]>,
     ) -> Result<(), Error> {
         assert_eq!(count, ots.len());
-        let delta = self.rng.gen();
+        let delta = self.rng.r#gen();
         let mut ots_buf = mem::take(ots);
         let correlated = self.correlated_send(count, delta).await?;
 
@@ -157,7 +157,7 @@ impl<S: Security> SilentOtSender<S> {
             RegularPprfSender::new_with_conf(self.conn.sub_connection(), pprf_conf, base_ots);
         let mut B = mem::take(ots);
         pprf_sender
-            .expand(delta, self.rng.gen(), conf.pprf_out_fmt(), &mut B)
+            .expand(delta, self.rng.r#gen(), conf.pprf_out_fmt(), &mut B)
             .await?;
 
         if S::MALICIOUS_SECURITY {
@@ -318,7 +318,7 @@ impl<S: Security> SilentOtReceiver<S> {
         let mut mal_check_seed = Block::ZERO;
         let mut mal_check_x = Block::ZERO;
         if S::MALICIOUS_SECURITY {
-            mal_check_seed = self.rng.gen();
+            mal_check_seed = self.rng.r#gen();
 
             for &p in &noisy_points {
                 mal_check_x ^= mal_check_seed.gf_pow(p as u64 + 1);
@@ -576,11 +576,11 @@ mod tests {
     use subtle::Choice;
 
     use crate::{
+        RandChoiceRotReceiver, RotSender,
         silent_ot::{
             MaliciousSilentOtReceiver, MaliciousSilentOtSender, SemiHonestSilentOtReceiver,
             SemiHonestSilentOtSender,
         },
-        RandChoiceRotReceiver, RotSender,
     };
 
     fn check_correlated(a: &[Block], b: &[Block], choice: Option<&[Choice]>, delta: Block) {

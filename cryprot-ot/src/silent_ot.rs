@@ -100,15 +100,24 @@ impl<S: Security> SilentOtSender<S> {
 
         let ots_buf = spawn_compute(move || {
             let masked_delta = delta & Block::MASK_LSB;
-            for (ot_chunk, corr_chunk) in ots_buf
+            for ((chunk_idx, ot_chunk), corr_chunk) in ots_buf
                 .chunks_mut(AES_PAR_BLOCKS)
+                .enumerate()
                 .zip(correlated.chunks(AES_PAR_BLOCKS))
             {
                 for (ots, corr) in ot_chunk.iter_mut().zip(corr_chunk) {
                     let masked = *corr & Block::MASK_LSB;
                     *ots = [masked, masked ^ masked_delta]
                 }
-                FIXED_KEY_HASH.cr_hash_slice_mut(cast_slice_mut(ot_chunk));
+                if S::MALICIOUS_SECURITY {
+                    // It is currently unknown whether a cr hash is sufficient for Silent OT, so we
+                    // use the safe choice of a tccr hash at the cost of some performance.
+                    // See https://github.com/osu-crypto/libOTe/issues/166 for discussion
+                    FIXED_KEY_HASH
+                        .tccr_hash_slice_mut(cast_slice_mut(ot_chunk), |i| Block::from(chunk_idx * AES_PAR_BLOCKS + i / 2));
+                } else {
+                    FIXED_KEY_HASH.cr_hash_slice_mut(cast_slice_mut(ot_chunk));
+                }
             }
             ots_buf
         })
@@ -261,7 +270,11 @@ impl<S: Security> SilentOtReceiver<S> {
                 })
                 .collect();
 
-            FIXED_KEY_HASH.cr_hash_slice_mut(&mut ots_buf);
+            if S::MALICIOUS_SECURITY {
+                FIXED_KEY_HASH.tccr_hash_slice_mut(&mut ots_buf, Block::from);
+            } else {
+                FIXED_KEY_HASH.cr_hash_slice_mut(&mut ots_buf);
+            }
             (ots_buf, choices)
         })
         .await

@@ -30,5 +30,7 @@ jobs:
           --token '${{ secrets.BENCHER_API_TOKEN }}' \
           --branch main \
           --testbed ubicloud-standard-4 \
-          --github-actions '${{ secrets.GITHUB_TOKEN }}' \
+          --threshold-measure latency \
+          --threshold-test t_test \
+          --threshold-upper-boundary 0.99 \
           'cargo bench'

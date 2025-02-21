@@ -1,0 +1,34 @@
+name: bench
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  benchmarks:
+    runs-on: "ubicloud-standard-4"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: stable
+      - name: Override default toolchain
+        run: rustup override set ${{steps.toolchain.outputs.name}}
+      - run: cargo --version
+      - name: Install bencher
+        uses: bencherdev/bencher@main
+      - name: Run benchmarks
+        run: |
+          bencher run \
+          --project cryprot \
+          --token '${{ secrets.BENCHER_API_TOKEN }}' \
+          --branch main \
+          --testbed ubicloud-standard-4 \
+          --github-actions '${{ secrets.GITHUB_TOKEN }}' \
+          'cargo bench'

@@ -29,6 +29,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Create Docs
         run: cargo doc --workspace --verbose --all-features --no-deps -Zunstable-options -Zrustdoc-scrape-examples
+        components: rust-docs
       - name: Fix permissions
         run: |
           chmod -c -R +rX "target/doc/" | while read line; do

@@ -63,3 +63,26 @@ jobs:
         run: cargo fmt --all --check
       - name: Check Clippy
         run: cargo clippy --workspace --all-features --examples -- -D warnings
+
+
+  docs:
+    name: Docs
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: nightly-2025-02-14
+          components: rust-docs
+      - name: Override default toolchain
+        run: rustup override set ${{steps.toolchain.outputs.name}}
+      - run: cargo --version
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Check docs
+        run: cargo doc --workspace --verbose --all-features --no-deps -Zunstable-options -Zrustdoc-scrape-examples

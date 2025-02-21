@@ -2,9 +2,9 @@
 //!
 //! The [`CommLayer`] is a [`tracing_subscriber::Layer`] which records numbers
 //! of bytes read and written. Metrics are collected by
-//! [`instrumenting`](`tracing::instrument`) spans with the `cryprot_metrics`
-//! target and a phase. From within these spans, events with the same target can
-//! be emitted to track the number of bytes read/written.
+//! [`instrumenting`](`macro@tracing::instrument`) spans with the
+//! `cryprot_metrics` target and a phase. From within these spans, events with
+//! the same target can be emitted to track the number of bytes read/written.
 //!
 //! ```
 //! use tracing::{event, instrument, Level};

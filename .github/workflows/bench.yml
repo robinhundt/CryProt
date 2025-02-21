@@ -32,4 +32,5 @@ jobs:
           --testbed ubicloud-standard-4 \
           --threshold-measure latency \
           --threshold-test t_test \
+          --threshold-upper-boundary 0.99 \
           'cargo bench'

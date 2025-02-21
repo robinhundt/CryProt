@@ -57,7 +57,7 @@ impl<T> HugePageMemory<T> {
     }
 }
 
-#[cfg(target_family = "unix")]
+#[cfg(target_os = "linux")]
 impl<T: Zeroable> HugePageMemory<T> {
     /// Allocate a buffer of `len` elements that is backed by transparent huge
     /// pages.
@@ -167,7 +167,7 @@ impl<T: Zeroable + Clone> HugePageMemory<T> {
     }
 }
 
-#[cfg(target_family = "unix")]
+#[cfg(target_os = "linux")]
 impl<T> HugePageMemory<T> {
     fn layout(len: usize) -> Layout {
         let size = len * mem::size_of::<T>();
@@ -177,7 +177,7 @@ impl<T> HugePageMemory<T> {
     }
 }
 
-#[cfg(target_family = "unix")]
+#[cfg(target_os = "linux")]
 impl<T> Drop for HugePageMemory<T> {
     #[inline]
     fn drop(&mut self) {
@@ -188,7 +188,7 @@ impl<T> Drop for HugePageMemory<T> {
 }
 
 // Fallback implementation on non unix systems.
-#[cfg(not(target_family = "unix"))]
+#[cfg(not(target_os = "linux"))]
 impl<T: Zeroable> HugePageMemory<T> {
     pub fn zeroed(len: usize) -> Self {
         let v = allocate_zeroed_vec(len);
@@ -198,7 +198,7 @@ impl<T: Zeroable> HugePageMemory<T> {
     }
 }
 
-#[cfg(not(target_family = "unix"))]
+#[cfg(not(target_os = "linux"))]
 impl<T> Drop for HugePageMemory<T> {
     fn drop(&mut self) {
         unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len, self.len) };

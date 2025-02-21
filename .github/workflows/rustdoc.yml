@@ -22,6 +22,7 @@ jobs:
         id: toolchain
         with:
           toolchain: nightly-2025-02-14
+          components: rust-docs
       - name: Override default toolchain
         run: rustup override set ${{steps.toolchain.outputs.name}}
       - run: cargo --version

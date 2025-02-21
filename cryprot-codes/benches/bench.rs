@@ -32,7 +32,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         });
     }
 
-    #[cfg(feature = "bench-libote")]
+    #[cfg(all(feature = "bench-libote", target_os = "linux"))]
     {
         use cryprot_codes::ex_conv::ExConvCodeConfig;
 

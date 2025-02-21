@@ -1,12 +1,12 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     future::Future,
     io::{Error, IoSlice},
     mem,
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     sync::{
-        atomic::{AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicU32, Ordering},
     },
     task::{Context, Poll},
 };
@@ -16,18 +16,18 @@ use s2n_quic::{
     connection::{Handle, StreamAcceptor as QuicStreamAcceptor},
     stream::{ReceiveStream as QuicRecvStream, SendStream as QuicSendStream},
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     select,
     sync::{mpsc, oneshot},
 };
 use tokio_serde::{
-    formats::{Bincode, SymmetricalBincode},
     SymmetricallyFramed,
+    formats::{Bincode, SymmetricalBincode},
 };
-use tokio_util::codec::{length_delimited, FramedRead, FramedWrite, LengthDelimitedCodec};
-use tracing::{debug, error, event, Level};
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec, length_delimited};
+use tracing::{Level, debug, error, event};
 
 #[cfg(feature = "metrics")]
 pub mod metrics;
@@ -573,8 +573,8 @@ mod tests {
     use tracing::debug;
 
     use crate::{
-        testing::{init_tracing, local_conn},
         Id,
+        testing::{init_tracing, local_conn},
     };
 
     #[tokio::test]

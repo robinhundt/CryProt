@@ -1,0 +1,63 @@
+name: rustdoc
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  # Build job
+  build:
+    runs-on: "ubuntu-latest"
+    env:
+      # deny rustdoc warnings
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: nightly-2025-02-14
+      - name: Override default toolchain
+        run: rustup override set ${{steps.toolchain.outputs.name}}
+      - run: cargo --version
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Create Docs
+        run: cargo doc --workspace --verbose --all-features --no-deps -Zunstable-options -Zrustdoc-scrape-examples
+      - name: Fix permissions
+        run: |
+          chmod -c -R +rX "target/doc/" | while read line; do
+            echo "::warning title=Invalid file permissions automatically fixed::$line"
+          done
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "target/doc/"
+  
+  # Deploy job
+  deploy:
+    # Add a dependency to the build job
+    needs: build
+
+    # Grant GITHUB_TOKEN the permissions required to make a Pages deployment
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write   # to verify the deployment originates from an appropriate source
+
+    # Deploy to the github-pages environment
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    # Specify runner + deployment step
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4 # or specific "vX.X.X" version tag for this action
+

@@ -22,7 +22,7 @@
 //! }
 //! ```
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, btree_map::Entry},
     fmt::Debug,
     mem,
     ops::AddAssign,
@@ -31,9 +31,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tracing::{
+    Level,
     field::{Field, Visit},
     span::{Attributes, Id},
-    warn, Level,
+    warn,
 };
 use tracing_subscriber::{
     filter::{Filtered, Targets},
@@ -307,8 +308,8 @@ mod tests {
     use std::time::Duration;
 
     use tokio::{self, join, time::sleep};
-    use tracing::{event, instrument, Instrument, Level};
-    use tracing_subscriber::{layer::SubscriberExt, Registry};
+    use tracing::{Instrument, Level, event, instrument};
+    use tracing_subscriber::{Registry, layer::SubscriberExt};
 
     use crate::metrics::new_comm_layer;
 

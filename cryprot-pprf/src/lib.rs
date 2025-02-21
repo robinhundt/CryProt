@@ -463,7 +463,7 @@ fn interleave_point(point: usize, tree_idx: usize, domain: usize) -> usize {
 }
 
 fn copy_out(
-    last_lvl: &[[Block; 9]],
+    last_lvl: &[[Block; PARALLEL_TREES]],
     output: &mut [Block],
     tree_idx: usize,
     out_fmt: OutFormat,

@@ -129,7 +129,7 @@ impl ExpanderCode {
 #[cfg(test)]
 mod tests {
     use bytemuck::cast_slice_mut;
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
+    use rand::{RngCore, SeedableRng, rngs::StdRng};
 
     use super::*;
 

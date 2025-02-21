@@ -113,8 +113,9 @@ impl<S: Security> SilentOtSender<S> {
                     // It is currently unknown whether a cr hash is sufficient for Silent OT, so we
                     // use the safe choice of a tccr hash at the cost of some performance.
                     // See https://github.com/osu-crypto/libOTe/issues/166 for discussion
-                    FIXED_KEY_HASH
-                        .tccr_hash_slice_mut(cast_slice_mut(ot_chunk), |i| Block::from(chunk_idx * AES_PAR_BLOCKS + i / 2));
+                    FIXED_KEY_HASH.tccr_hash_slice_mut(cast_slice_mut(ot_chunk), |i| {
+                        Block::from(chunk_idx * AES_PAR_BLOCKS + i / 2)
+                    });
                 } else {
                     FIXED_KEY_HASH.cr_hash_slice_mut(cast_slice_mut(ot_chunk));
                 }

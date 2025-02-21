@@ -1,6 +1,7 @@
 use std::{arch::x86_64::*, hint::unreachable_unchecked};
 
-#[inline(always)]
+#[inline]
+#[target_feature(enable = "avx2")]
 unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
     unsafe {
         match shift {
@@ -14,7 +15,8 @@ unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
     }
 }
 
-#[inline(always)]
+#[inline]
+#[target_feature(enable = "avx2")]
 unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
     unsafe {
         match shift {
@@ -29,8 +31,10 @@ unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
 }
 
 // Transpose a 2^block_size_shift x 2^block_size_shift block within a larger
-// matrix Only handles first two rows out of every 2^block_rows_shift rows
-#[inline(always)] // in each block
+// matrix Only handles first two rows out of every 2^block_rows_shift rows in
+// each block
+#[inline]
+#[target_feature(enable = "avx2")]
 unsafe fn avx_transpose_block_iter1(
     in_out: *mut __m256i,
     block_size_shift: usize,
@@ -85,7 +89,8 @@ unsafe fn avx_transpose_block_iter1(
     }
 }
 
-#[inline(always)] // Process a range of rows in the matrix
+#[inline] // Process a range of rows in the matrix
+#[target_feature(enable = "avx2")]
 unsafe fn avx_transpose_block_iter2(
     in_out: *mut __m256i,
     block_size_shift: usize,
@@ -103,7 +108,8 @@ unsafe fn avx_transpose_block_iter2(
     }
 }
 
-#[inline(always)] // Main transpose function for blocks within the matrix
+#[inline] // Main transpose function for blocks within the matrix
+#[target_feature(enable = "avx2")]
 unsafe fn avx_transpose_block(
     in_out: *mut __m256i,
     block_size_shift: usize,
@@ -136,7 +142,8 @@ const AVX_BLOCK_SHIFT: usize = 4;
 const AVX_BLOCK_SIZE: usize = 1 << AVX_BLOCK_SHIFT;
 
 // Main entry point for matrix transpose
-pub fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
+#[target_feature(enable = "avx2")]
+pub unsafe fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
     const MAT_SIZE_SHIFT: usize = 7;
     unsafe {
         let in_out = in_out.as_mut_ptr();
@@ -166,7 +173,8 @@ pub fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
     }
 }
 
-pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
+#[target_feature(enable = "avx2")]
+pub unsafe fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     assert_eq!(input.len(), output.len());
     let cols = input.len() * 8 / rows;
     assert_eq!(0, cols % 128);
@@ -193,8 +201,11 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
                     std::ptr::copy_nonoverlapping(src_row, buf_u8_ptr.add(k * 16), 16);
                 }
             }
-            // Transpose the 128x128 bit square
-            avx_transpose128x128(&mut buf);
+            // SAFETY: avx2 is enabled
+            unsafe {
+                // Transpose the 128x128 bit square
+                avx_transpose128x128(&mut buf);
+            }
 
             unsafe {
                 // needs to be recreated because prev &mut borrow invalidates ptr
@@ -210,7 +221,7 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_feature = "avx2"))]
 mod tests {
     use std::arch::x86_64::_mm256_setzero_si256;
 
@@ -253,7 +264,9 @@ mod tests {
 
         let mut avx_transposed = v.clone();
         let mut sse_transposed = v.clone();
-        transpose_bitmatrix(&v, &mut avx_transposed, rows);
+        unsafe {
+            transpose_bitmatrix(&v, &mut avx_transposed, rows);
+        }
         crate::transpose::portable::transpose_bitmatrix(&v, &mut sse_transposed, rows);
 
         assert_eq!(sse_transposed, avx_transposed);

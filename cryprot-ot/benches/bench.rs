@@ -3,10 +3,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use cryprot_core::{alloc::HugePageMemory, Block};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use cryprot_core::{Block, alloc::HugePageMemory};
 use cryprot_net::testing::{init_bench_tracing, local_conn};
 use cryprot_ot::{
+    RotReceiver, RotSender,
     base::SimplestOt,
     extension::{
         MaliciousOtExtensionReceiver, MaliciousOtExtensionSender, SemiHonestOtExtensionReceiver,
@@ -17,9 +18,8 @@ use cryprot_ot::{
         MaliciousSilentOtReceiver, MaliciousSilentOtSender, SemiHonestSilentOtReceiver,
         SemiHonestSilentOtSender,
     },
-    RotReceiver, RotSender,
 };
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 use tokio::runtime::{self, Runtime};
 
 fn create_mt_runtime(threads: usize) -> Runtime {

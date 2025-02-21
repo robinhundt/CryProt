@@ -1,4 +1,4 @@
-use wide::{i64x2, i8x16};
+use wide::{i8x16, i64x2};
 
 /// Transpose a bit matrix.
 ///
@@ -126,6 +126,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_arch = "x86_64")] // miri doesn't know the intrinsics on e.g. ARM
     fn test_double_transpose_miri() {
         let rows = 32;
         let cols = 16;

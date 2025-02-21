@@ -1,7 +1,10 @@
 use std::io;
 
 use cryprot_core::{
-    buf::Buf, rand_compat::RngCompat, random_oracle::{Hash, RandomOracle}, Block
+    Block,
+    buf::Buf,
+    rand_compat::RngCompat,
+    random_oracle::{Hash, RandomOracle},
 };
 use cryprot_net::{Connection, ConnectionError};
 use curve25519_dalek::{RistrettoPoint, Scalar, constants::RISTRETTO_BASEPOINT_TABLE};

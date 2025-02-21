@@ -269,7 +269,7 @@ mod tests {
     use bytemuck::cast_slice_mut;
     use cryprot_core::block::Block;
     #[cfg(feature = "libote-compat")]
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
+    use rand::{RngCore, SeedableRng, rngs::StdRng};
 
     use super::*;
 
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(code.parity_cols(), code_size);
     }
 
-    #[cfg(feature = "libote-compat")]
+    #[cfg(all(feature = "libote-compat", target_os = "linux"))]
     #[test]
     fn test_compare_to_libote() {
         let message_size = 200;
@@ -347,7 +347,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "libote-compat")]
+    #[cfg(all(feature = "libote-compat", target_os = "linux"))]
     #[test]
     fn test_compare_to_libote_bytes() {
         let message_size = 200;

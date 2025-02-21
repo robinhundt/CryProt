@@ -1,5 +1,5 @@
 use std::{
-    alloc::{handle_alloc_error, Layout},
+    alloc::{Layout, handle_alloc_error},
     fmt::Debug,
     mem,
     ops::{Deref, DerefMut},
@@ -57,7 +57,7 @@ impl<T> HugePageMemory<T> {
     }
 }
 
-#[cfg(target_family = "unix")]
+#[cfg(target_os = "linux")]
 impl<T: Zeroable> HugePageMemory<T> {
     /// Allocate a buffer of `len` elements that is backed by transparent huge
     /// pages.
@@ -167,7 +167,7 @@ impl<T: Zeroable + Clone> HugePageMemory<T> {
     }
 }
 
-#[cfg(target_family = "unix")]
+#[cfg(target_os = "linux")]
 impl<T> HugePageMemory<T> {
     fn layout(len: usize) -> Layout {
         let size = len * mem::size_of::<T>();
@@ -177,7 +177,7 @@ impl<T> HugePageMemory<T> {
     }
 }
 
-#[cfg(target_family = "unix")]
+#[cfg(target_os = "linux")]
 impl<T> Drop for HugePageMemory<T> {
     #[inline]
     fn drop(&mut self) {
@@ -188,20 +188,24 @@ impl<T> Drop for HugePageMemory<T> {
 }
 
 // Fallback implementation on non unix systems.
-#[cfg(not(target_family = "unix"))]
+#[cfg(not(target_os = "linux"))]
 impl<T: Zeroable> HugePageMemory<T> {
     pub fn zeroed(len: usize) -> Self {
         let v = allocate_zeroed_vec(len);
         assert_eq!(v.len(), v.capacity());
         let ptr = NonNull::new(v.leak().as_mut_ptr()).expect("not null");
-        Self { ptr, len }
+        Self {
+            ptr,
+            len,
+            capacity: len,
+        }
     }
 }
 
-#[cfg(not(target_family = "unix"))]
+#[cfg(not(target_os = "linux"))]
 impl<T> Drop for HugePageMemory<T> {
     fn drop(&mut self) {
-        unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len, self.len) };
+        unsafe { Vec::from_raw_parts(self.ptr.as_ptr(), self.len, self.capacity) };
     }
 }
 
@@ -260,7 +264,7 @@ pub fn allocate_zeroed_vec<T: Zeroable>(len: usize) -> Vec<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HugePageMemory, HUGE_PAGE_SIZE};
+    use super::{HUGE_PAGE_SIZE, HugePageMemory};
 
     #[test]
     fn test_huge_page_memory() {
@@ -274,6 +278,12 @@ mod tests {
         mem[42] = 5;
         mem.set_len(HUGE_PAGE_SIZE);
         assert_eq!(HUGE_PAGE_SIZE, mem.len());
+    }
+
+    #[test]
+    fn test_set_len_correct_dealloc() {
+        let mut mem = HugePageMemory::<u8>::zeroed(HUGE_PAGE_SIZE);
+        mem.set_len(HUGE_PAGE_SIZE / 2);
     }
 
     #[test]

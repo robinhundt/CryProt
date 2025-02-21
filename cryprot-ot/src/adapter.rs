@@ -67,13 +67,13 @@ impl<S: RotSender + RandChoiceRotSender + Send> RotSender for ChosenChoice<S> {
 #[cfg(test)]
 mod tests {
     use cryprot_net::testing::{init_tracing, local_conn};
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
 
     use crate::{
+        RotReceiver, RotSender,
         adapter::ChosenChoice,
         random_choices,
         silent_ot::{SemiHonestSilentOtReceiver, SemiHonestSilentOtSender},
-        RotReceiver, RotSender,
     };
 
     #[tokio::test]

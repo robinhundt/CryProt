@@ -24,7 +24,7 @@ jobs:
         id: toolchain
         with:
           toolchain: nightly-2025-02-14
-          components: "rustfmt"
+          components: "rustfmt, miri"
       - name: Override default toolchain
         run: rustup override set ${{steps.toolchain.outputs.name}}
       - run: cargo --version
@@ -35,6 +35,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --workspace --verbose --all-features --no-fail-fast
+      - name: Run miri test
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo miri t -p cryprot-codes -p cryprot-core 
   lint:
     name: Lint
     runs-on: "ubuntu-latest"

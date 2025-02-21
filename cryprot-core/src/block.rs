@@ -5,7 +5,7 @@ use std::{
 
 use aes::cipher::{self, array::sizes};
 use bytemuck::{Pod, Zeroable};
-use rand::{distr::StandardUniform, prelude::Distribution, Rng};
+use rand::{Rng, distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 use wide::u8x16;

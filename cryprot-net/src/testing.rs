@@ -1,12 +1,12 @@
 use std::net::{Ipv4Addr, SocketAddr};
 
 use anyhow::Context;
-use s2n_quic::{client::Connect, provider::limits::Limits, Client, Server};
+use s2n_quic::{Client, Server, client::Connect, provider::limits::Limits};
 use tokio::join;
 
 use crate::{
-    metrics::{new_comm_layer, CommLayerData},
     Connection,
+    metrics::{CommLayerData, new_comm_layer},
 };
 
 /// NOTE: this certificate is to be used for demonstration purposes only!
@@ -59,9 +59,9 @@ pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
 }
 
 use tracing_subscriber::{
+    EnvFilter, Layer, Registry,
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
-    EnvFilter, Layer, Registry,
 };
 
 pub struct TestCommLayerDataGuard(pub CommLayerData);

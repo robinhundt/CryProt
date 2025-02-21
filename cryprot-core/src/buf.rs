@@ -5,7 +5,7 @@ use std::{
 
 use bytemuck::Zeroable;
 
-use crate::alloc::{allocate_zeroed_vec, HugePageMemory};
+use crate::alloc::{HugePageMemory, allocate_zeroed_vec};
 
 pub trait Buf<T>: Default + Debug + Deref<Target = [T]> + DerefMut + Send + Sync + 'static {
     fn zeroed(len: usize) -> Self;

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use cryprot_net::testing::{init_bench_tracing, local_conn};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},

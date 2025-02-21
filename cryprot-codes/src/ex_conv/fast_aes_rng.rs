@@ -1,5 +1,5 @@
 use bytemuck::{cast_mut, cast_ref, cast_slice, cast_slice_mut};
-use cryprot_core::{aes_rng::AesRng, Block};
+use cryprot_core::{Block, aes_rng::AesRng};
 use rand::{RngCore, SeedableRng};
 
 // Simple PRNG implementation for the accumulator

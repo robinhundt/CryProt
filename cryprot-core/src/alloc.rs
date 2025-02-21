@@ -1,5 +1,5 @@
 use std::{
-    alloc::{handle_alloc_error, Layout},
+    alloc::{Layout, handle_alloc_error},
     fmt::Debug,
     mem,
     ops::{Deref, DerefMut},
@@ -260,7 +260,7 @@ pub fn allocate_zeroed_vec<T: Zeroable>(len: usize) -> Vec<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HugePageMemory, HUGE_PAGE_SIZE};
+    use super::{HUGE_PAGE_SIZE, HugePageMemory};
 
     #[test]
     fn test_huge_page_memory() {

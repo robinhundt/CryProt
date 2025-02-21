@@ -5,12 +5,12 @@ pub mod aes_rng;
 pub mod alloc;
 pub mod block;
 pub mod buf;
+pub mod rand_compat;
 pub mod random_oracle;
 #[cfg(feature = "tokio-rayon")]
 pub mod tokio_rayon;
 pub mod transpose;
 pub mod utils;
-pub mod rand_compat;
 
 pub use block::Block;
 
@@ -27,10 +27,10 @@ pub const AES_PAR_BLOCKS: usize = 4;
 #[cfg(all(test, not(miri), target_feature = "aes"))]
 mod tests {
     use aes::{
+        Aes128,
         cipher::{
             BlockCipherEncClosure, BlockCipherEncrypt, BlockSizeUser, KeyInit, ParBlocksSizeUser,
         },
-        Aes128,
     };
 
     use crate::AES_PAR_BLOCKS;

@@ -5,12 +5,12 @@
 use std::sync::LazyLock;
 
 use aes::{
-    cipher::{BlockCipherEncrypt, Key, KeyInit},
     Aes128,
+    cipher::{BlockCipherEncrypt, Key, KeyInit},
 };
 use bytemuck::Pod;
 
-use crate::{utils::xor_inplace, Block, AES_PAR_BLOCKS};
+use crate::{AES_PAR_BLOCKS, Block, utils::xor_inplace};
 
 pub struct AesHash {
     aes: Aes128,

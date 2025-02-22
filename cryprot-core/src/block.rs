@@ -308,35 +308,41 @@ impl From<&u128> for Block {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-impl From<std::arch::x86_64::__m128i> for Block {
-    #[inline]
-    fn from(value: std::arch::x86_64::__m128i) -> Self {
-        bytemuck::cast(value)
-    }
-}
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod from_arch_impls {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
 
-#[cfg(target_arch = "x86_64")]
-impl From<&std::arch::x86_64::__m128i> for Block {
-    #[inline]
-    fn from(value: &std::arch::x86_64::__m128i) -> Self {
-        bytemuck::cast(*value)
-    }
-}
+    use super::Block;
 
-#[cfg(target_arch = "x86_64")]
-impl From<Block> for std::arch::x86_64::__m128i {
-    #[inline]
-    fn from(value: Block) -> Self {
-        bytemuck::cast(value)
+    impl From<__m128i> for Block {
+        #[inline]
+        fn from(value: __m128i) -> Self {
+            bytemuck::must_cast(value)
+        }
     }
-}
 
-#[cfg(target_arch = "x86_64")]
-impl From<&Block> for std::arch::x86_64::__m128i {
-    #[inline]
-    fn from(value: &Block) -> Self {
-        bytemuck::cast(*value)
+    impl From<&__m128i> for Block {
+        #[inline]
+        fn from(value: &__m128i) -> Self {
+            bytemuck::must_cast(*value)
+        }
+    }
+
+    impl From<Block> for __m128i {
+        #[inline]
+        fn from(value: Block) -> Self {
+            bytemuck::must_cast(value)
+        }
+    }
+
+    impl From<&Block> for __m128i {
+        #[inline]
+        fn from(value: &Block) -> Self {
+            bytemuck::must_cast(*value)
+        }
     }
 }
 

@@ -7,7 +7,9 @@ use bytemuck::Zeroable;
 
 use crate::alloc::{HugePageMemory, allocate_zeroed_vec};
 
-pub trait Buf<T>: Default + Debug + Deref<Target = [T]> + DerefMut + Send + Sync + 'static {
+pub trait Buf<T>:
+    Default + Debug + Deref<Target = [T]> + DerefMut + Send + Sync + 'static + private::Sealed
+{
     fn zeroed(len: usize) -> Self;
 
     fn capacity(&self) -> usize;
@@ -61,6 +63,15 @@ impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for H
     fn grow_zeroed(&mut self, new_size: usize) {
         self.grow_zeroed(new_size);
     }
+}
+
+mod private {
+    use crate::alloc::HugePageMemory;
+
+    pub trait Sealed {}
+
+    impl<T> Sealed for Vec<T> {}
+    impl<T> Sealed for HugePageMemory<T> {}
 }
 
 #[cfg(test)]

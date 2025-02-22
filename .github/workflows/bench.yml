@@ -25,6 +25,8 @@ jobs:
         uses: bencherdev/bencher@main
       - name: CPU information
         run: lscpu
+      - name: Cache
+        uses: ubicloud/rust-cache@v2
       - name: Run benchmarks
         run: |
           bencher run \

@@ -1,5 +1,5 @@
 //! Fast OT extension using optimized [[IKNP03](https://www.iacr.org/archive/crypto2003/27290145/27290145.pdf)] (semi-honest)
-//! or [[KOS15]](https://eprint.iacr.org/2015/546.pdf) (malicious) protocol.
+//! or [[KOS15](https://eprint.iacr.org/2015/546.pdf)] (malicious) protocol.
 //!
 //! The protocols are optimized for the availability of `aes` and `avx2` target
 //! features for the semi-honest protocol and additionally `pclmulqdq` for the

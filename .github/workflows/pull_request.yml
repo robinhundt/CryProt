@@ -68,6 +68,9 @@ jobs:
   docs:
     name: Docs
     runs-on: "ubuntu-latest"
+    env:
+      # deny rustdoc warnings
+      RUSTDOCFLAGS: -D warnings
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

@@ -23,6 +23,8 @@ jobs:
       - run: cargo --version
       - name: Install bencher
         uses: bencherdev/bencher@main
+      - name: CPU information
+        run: lscpu
       - name: Run benchmarks
         run: |
           bencher run \

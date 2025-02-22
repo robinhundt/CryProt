@@ -42,7 +42,7 @@ impl RngCore for AesRng {
         let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(block_bytes);
         for chunk in blocks.chunks_mut(AES_PAR_BLOCKS) {
             for block in chunk.iter_mut() {
-                *block = aes::cipher::Array(self.0.core.state.to_ne_bytes());
+                *block = aes::cipher::Array(self.0.core.state.to_le_bytes());
                 self.0.core.state += 1;
             }
             self.0.core.aes.encrypt_blocks(chunk);

@@ -1,4 +1,4 @@
-//! # Distributed Puncturable Pseudorandom Function (PPRF) Implementation
+//! Distributed Puncturable Pseudorandom Function (PPRF) Implementation.
 use std::{array, cmp::Ordering, io, mem};
 
 use aes::{
@@ -23,12 +23,14 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::Level;
 
+/// Sender for PPRF expansion.
 pub struct RegularPprfSender {
     conn: Connection,
     conf: PprfConfig,
     base_ots: Array2<[Block; 2]>,
 }
 
+/// Receiver for the PPRF expansion.
 pub struct RegularPprfReceiver {
     conn: Connection,
     conf: PprfConfig,
@@ -44,6 +46,7 @@ pub enum OutFormat {
     Interleaved,
 }
 
+/// Errors returned by the PPRF expansion.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("unable to establish sub-stream to pprf peer")]
@@ -54,10 +57,114 @@ pub enum Error {
     Receive(#[source] io::Error),
 }
 
+/// Number of trees that are expanded in parallel using AES ILP.
+///
+/// The concrete value depends on the target architecture.
 pub const PARALLEL_TREES: usize = AES_PAR_BLOCKS;
 
+/// Communication phase for [`cryprot_net::metrics`].
+pub const COMMUNICATION_PHASE: &str = "pprf-expansion";
+
+/// Config for a PPRF expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PprfConfig {
+    pnt_count: usize,
+    domain: usize,
+    depth: usize,
+}
+
+impl PprfConfig {
+    /// Create a PprfConfig
+    ///
+    /// # Panics
+    /// - if `domain < 2`
+    /// - if `domain % 2 != 0`
+    /// - if `pnt_count % `[`PARALLEL_TREES`]` != 0`
+    pub fn new(domain: usize, pnt_count: usize) -> Self {
+        assert!(domain >= 2, "domain must be at least 2");
+        assert_eq!(0, domain % 2, "domain must be even");
+        assert_eq!(
+            0,
+            pnt_count % PARALLEL_TREES,
+            "pnt_count must be divisable by {PARALLEL_TREES}"
+        );
+        let depth = log2_ceil(domain);
+        Self {
+            pnt_count,
+            domain,
+            depth,
+        }
+    }
+
+    /// Number of base OTs needed for the configured PPRF expansion.
+    pub fn base_ot_count(&self) -> usize {
+        self.depth * self.pnt_count
+    }
+
+    pub fn pnt_count(&self) -> usize {
+        self.pnt_count
+    }
+
+    pub fn domain(&self) -> usize {
+        self.domain
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn size(&self) -> usize {
+        self.domain() * self.pnt_count()
+    }
+
+    /// Base OT choice bits needed for this PPRF expansion.
+    ///
+    /// Every `u8` element is either `0` or `1`.
+    pub fn sample_choice_bits<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Vec<u8> {
+        let mut choices = vec![0_u8; self.pnt_count() * self.depth()];
+        let dist = Uniform::new(0, self.domain()).expect("correct range");
+        for choice in choices.chunks_exact_mut(self.depth()) {
+            let mut idx = dist.sample(rng);
+            for choice_bit in choice {
+                *choice_bit = (idx & 1) as u8;
+                idx >>= 1;
+            }
+        }
+        choices
+    }
+
+    pub fn get_points(&self, out_fmt: OutFormat, base_choices: &[u8]) -> Vec<usize> {
+        match out_fmt {
+            OutFormat::Interleaved => {
+                let mut points = self.get_points(OutFormat::ByLeafIndex, base_choices);
+                for (i, point) in points.iter_mut().enumerate() {
+                    *point = interleave_point(*point, i, self.domain())
+                }
+                points
+            }
+            OutFormat::ByLeafIndex => {
+                let base_choices =
+                    ArrayView2::from_shape([self.pnt_count(), self.depth()], base_choices)
+                        .expect("base_choices has wrong size for this conf");
+
+                base_choices
+                    .rows()
+                    .into_iter()
+                    .map(|choice_bits| {
+                        debug_assert_eq!(self.depth(), choice_bits.len());
+                        let point = get_active_path(choice_bits.iter().copied());
+                        debug_assert!(point < self.domain());
+                        point
+                    })
+                    .collect()
+            }
+            _ => todo!(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
-pub struct TreeGrp {
+struct TreeGrp {
     g: usize,
     sums: [Vec<[Block; PARALLEL_TREES]>; 2],
     last_ots: Vec<[Block; 4]>,
@@ -88,7 +195,7 @@ impl RegularPprfSender {
     /// Note that this method temporarily moves out the buffer pointed to by
     /// `out`. If the future returned by `expand` is dropped or panics, out
     /// might point to a different buffer.
-    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = "PprfExpand"))]
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = COMMUNICATION_PHASE))]
     pub async fn expand(
         mut self,
         value: Block,
@@ -247,7 +354,7 @@ impl RegularPprfReceiver {
     /// Note that this method temporarily moves out the buffer pointed to by
     /// `out`. If the future returned by `expand` is dropped or panics, out
     /// might point to a different buffer.
-    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = "PprfExpand"))]
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = COMMUNICATION_PHASE))]
     pub async fn expand(
         mut self,
         out_fmt: OutFormat,
@@ -505,101 +612,9 @@ fn create_fixed_aes() -> [Aes128; 2] {
     ]
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PprfConfig {
-    pnt_count: usize,
-    domain: usize,
-    depth: usize,
-}
-
-impl PprfConfig {
-    /// Create a PprfConfig
-    ///
-    /// # Panics
-    /// - if `domain < 2`
-    /// - if `domain % 2 != 0`
-    /// - if `pnt_count % `[`PARALLEL_TREES`]` != 0`
-    pub fn new(domain: usize, pnt_count: usize) -> Self {
-        assert!(domain >= 2, "domain must be at least 2");
-        assert_eq!(0, domain % 2, "domain must be even");
-        assert_eq!(
-            0,
-            pnt_count % PARALLEL_TREES,
-            "pnt_count must be divisable by {PARALLEL_TREES}"
-        );
-        let depth = log2_ceil(domain);
-        Self {
-            pnt_count,
-            domain,
-            depth,
-        }
-    }
-
-    pub fn base_ot_count(&self) -> usize {
-        self.depth * self.pnt_count
-    }
-
-    pub fn pnt_count(&self) -> usize {
-        self.pnt_count
-    }
-
-    pub fn domain(&self) -> usize {
-        self.domain
-    }
-
-    pub fn depth(&self) -> usize {
-        self.depth
-    }
-
-    pub fn size(&self) -> usize {
-        self.domain() * self.pnt_count()
-    }
-
-    pub fn sample_choice_bits<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Vec<u8> {
-        let mut choices = vec![0_u8; self.pnt_count() * self.depth()];
-        let dist = Uniform::new(0, self.domain()).expect("correct range");
-        for choice in choices.chunks_exact_mut(self.depth()) {
-            let mut idx = dist.sample(rng);
-            for choice_bit in choice {
-                *choice_bit = (idx & 1) as u8;
-                idx >>= 1;
-            }
-        }
-        choices
-    }
-
-    pub fn get_points(&self, out_fmt: OutFormat, base_choices: &[u8]) -> Vec<usize> {
-        match out_fmt {
-            OutFormat::Interleaved => {
-                let mut points = self.get_points(OutFormat::ByLeafIndex, base_choices);
-                for (i, point) in points.iter_mut().enumerate() {
-                    *point = interleave_point(*point, i, self.domain())
-                }
-                points
-            }
-            OutFormat::ByLeafIndex => {
-                let base_choices =
-                    ArrayView2::from_shape([self.pnt_count(), self.depth()], base_choices)
-                        .expect("base_choices has wrong size for this conf");
-
-                base_choices
-                    .rows()
-                    .into_iter()
-                    .map(|choice_bits| {
-                        debug_assert_eq!(self.depth(), choice_bits.len());
-                        let point = get_active_path(choice_bits.iter().copied());
-                        debug_assert!(point < self.domain());
-                        point
-                    })
-                    .collect()
-            }
-            _ => todo!(),
-        }
-    }
-}
-
-/// Intended for testing. Generated suitable OTs and choice bits for a pprf
+/// Intended for testing. Generates suitable OTs and choice bits for a pprf
 /// evaluation.
+#[doc(hidden)]
 pub fn fake_base<R: RngCore + CryptoRng>(
     conf: PprfConfig,
     rng: &mut R,

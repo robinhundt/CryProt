@@ -1,3 +1,4 @@
+//! Semi-honest and malicious Silent OT implementation using expand-convolute code [[RRT23](https://eprint.iacr.org/2023/882)].
 #![allow(non_snake_case)]
 use std::{io, marker::PhantomData, mem};
 
@@ -19,6 +20,7 @@ use crate::{
     RotSender, Security, SemiHonest, SemiHonestMarker,
     extension::{self, OtExtensionReceiver, OtExtensionSender},
     noisy_vole::{self, NoisyVoleReceiver, NoisyVoleSender},
+    phase,
 };
 
 pub const SECURITY_PARAMETER: usize = 128;
@@ -88,6 +90,7 @@ impl<S: Security> SilentOtSender<S> {
         Ok(ots)
     }
 
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::SILENT_RANDOM_EXTENSION))]
     pub async fn random_sent_into(
         &mut self,
         count: usize,
@@ -128,7 +131,6 @@ impl<S: Security> SilentOtSender<S> {
         Ok(())
     }
 
-    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_send"))]
     pub async fn correlated_send(
         &mut self,
         count: usize,
@@ -139,6 +141,7 @@ impl<S: Security> SilentOtSender<S> {
         Ok(ots)
     }
 
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::SILENT_CORRELATED_EXTENSION))]
     pub async fn correlated_send_into(
         &mut self,
         count: usize,
@@ -179,6 +182,7 @@ impl<S: Security> SilentOtSender<S> {
         Ok(())
     }
 
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::MALICIOUS_CHECK))]
     async fn ferret_mal_check(
         &mut self,
         delta: Block,
@@ -252,6 +256,7 @@ impl<S: Security> SilentOtReceiver<S> {
         Ok((ots, choices))
     }
 
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::SILENT_RANDOM_EXTENSION))]
     pub async fn random_receive_into(
         &mut self,
         count: usize,
@@ -284,7 +289,6 @@ impl<S: Security> SilentOtReceiver<S> {
         Ok(choices)
     }
 
-    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_receive"))]
     pub async fn correlated_receive(
         &mut self,
         count: usize,
@@ -294,7 +298,7 @@ impl<S: Security> SilentOtReceiver<S> {
         Ok((ots, choices))
     }
 
-    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = "correlated_receive"))]
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::SILENT_CORRELATED_EXTENSION))]
     pub async fn correlated_receive_into(
         &mut self,
         count: usize,
@@ -366,6 +370,7 @@ impl<S: Security> SilentOtReceiver<S> {
         Ok(choices)
     }
 
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::MALICIOUS_CHECK))]
     async fn ferret_mal_check(
         &mut self,
         A: &mut impl Buf<Block>,

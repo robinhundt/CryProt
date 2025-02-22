@@ -1,3 +1,5 @@
+//! Tokio-Rayon integration to spawn compute tasks in async contexts.
+
 use std::{
     future::Future,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
@@ -12,6 +14,8 @@ pub struct TokioRayonJoinHandle<T: Send> {
     rx: oneshot::Receiver<thread::Result<T>>,
 }
 
+/// Spawns a compute intensive task on the [`rayon`] global threadpool and
+/// returns a future that can be awaited without blocking the async task.
 pub fn spawn_compute<F, T>(func: F) -> TokioRayonJoinHandle<T>
 where
     F: FnOnce() -> T + Send + 'static,

@@ -1,3 +1,4 @@
+//! Allocation utilities for efficiently allocating zeroed memory.
 use std::{
     alloc::{Layout, handle_alloc_error},
     fmt::Debug,
@@ -12,10 +13,10 @@ use bytemuck::Zeroable;
 /// An owned memory buffer that is allocated with transparent huge pages.
 ///
 /// Using [`HugePageMemory::zeroed`], you can quickly allocate a buffer of
-/// `len` elements of type `T` that is backed by transparent huge pages on Unix
-/// systems. Note that the allocation might be larger that requested to align to
-/// page boundaries. On non Unix systems, the memory will be allocated with the
-/// global allocator.
+/// `len` elements of type `T` that is backed by transparent huge pages on Linux
+/// systems. Note that the allocation might be larger than requested to align to
+/// page boundaries. On non Linux systems, the memory will be allocated with the
+/// global allocator and normal page size (equivalent to [`Vec`]).
 pub struct HugePageMemory<T> {
     ptr: NonNull<T>,
     len: usize,
@@ -60,7 +61,7 @@ impl<T> HugePageMemory<T> {
 #[cfg(target_os = "linux")]
 impl<T: Zeroable> HugePageMemory<T> {
     /// Allocate a buffer of `len` elements that is backed by transparent huge
-    /// pages.
+    /// pages when possible.
     pub fn zeroed(len: usize) -> Self {
         let layout = Self::layout(len);
         let capacity = layout.size();
@@ -244,7 +245,10 @@ impl<T: Debug> Debug for HugePageMemory<T> {
 unsafe impl<T: Send> Send for HugePageMemory<T> {}
 unsafe impl<T: Sync> Sync for HugePageMemory<T> {}
 
-// Keep this function as it has less strict Bounds on T than Vec::zeroed.
+/// Allocate a zeroed [`Vec`].
+///
+/// This function has less strict boundaries tha [`<Vec as
+/// Buf>::zeroed`](`super::buf::Buf::zeroed`).
 pub fn allocate_zeroed_vec<T: Zeroable>(len: usize) -> Vec<T> {
     unsafe {
         let size = len * mem::size_of::<T>();

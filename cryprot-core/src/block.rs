@@ -1,3 +1,6 @@
+//! A 128-bit [`Block`] type.
+//!
+//! Operations on [`Block`]s will use SIMD instructions where possible.
 use std::{
     fmt,
     ops::{Add, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not, Shl, Shr},
@@ -10,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 use wide::u8x16;
 
-use crate::random_oracle::RandomOracle;
+use crate::random_oracle::{self, RandomOracle};
 
 pub mod gf128;
 
@@ -20,24 +23,42 @@ pub mod gf128;
 pub struct Block(u8x16);
 
 impl Block {
+    /// All bits set to 0.
     pub const ZERO: Self = Self(u8x16::ZERO);
+    /// All bits set to 1.
     pub const ONES: Self = Self(u8x16::MAX);
+    /// Lsb set to 1, all others zero.
     pub const ONE: Self = Self::new(1_u128.to_ne_bytes());
+    /// Mask to mask off the LSB of a Block.
+    /// ```rust
+    /// # use cryprot_core::Block;
+    /// let b = Block::ONES;
+    /// let masked = b & Block::MASK_LSB;
+    /// assert_eq!(masked, Block::ONES << 1)
+    /// ```
     pub const MASK_LSB: Self = Self::pack(u64::MAX << 1, u64::MAX);
 
+    /// 16 bytes in a Block.
     pub const BYTES: usize = 16;
+    /// 128 bits in a block.
     pub const BITS: usize = 128;
 
+    /// Create a new block from bytes.
     #[inline]
     pub const fn new(bytes: [u8; 16]) -> Self {
         Self(u8x16::new(bytes))
     }
 
+    /// Create a block with all bytes set to `byte`.
     #[inline]
     pub const fn splat(byte: u8) -> Self {
         Self::new([byte; 16])
     }
 
+    /// Pack two `u64` into a Block. Usable in const context.
+    ///
+    /// In non-const contexts, using `Block::from([low, high])` is likely
+    /// faster.
     #[inline]
     pub const fn pack(low: u64, high: u64) -> Self {
         let mut bytes = [0; 16];
@@ -58,18 +79,21 @@ impl Block {
         Self::new(bytes)
     }
 
+    /// Bytes of the block.
     #[inline]
     pub fn as_bytes(&self) -> &[u8; 16] {
         self.0.as_array_ref()
     }
 
+    /// Mutable bytes of the block.
     #[inline]
     pub fn as_mut_bytes(&mut self) -> &mut [u8; 16] {
         self.0.as_array_mut()
     }
 
+    /// Hash the block with a [`random_oracle`].
     #[inline]
-    pub fn ro_hash(&self) -> blake3::Hash {
+    pub fn ro_hash(&self) -> random_oracle::Hash {
         let mut ro = RandomOracle::new();
         ro.update(self.as_bytes());
         ro.finalize()
@@ -91,21 +115,25 @@ impl Block {
         Self::new(bytes)
     }
 
+    /// Low 64 bits of the block.
     #[inline]
     pub fn low(&self) -> u64 {
         u64::from_ne_bytes(self.as_bytes()[..8].try_into().expect("correct len"))
     }
 
+    /// High 64 bits of the block.
     #[inline]
     pub fn high(&self) -> u64 {
         u64::from_ne_bytes(self.as_bytes()[8..].try_into().expect("correct len"))
     }
 
+    /// Least significant bit of the block
     #[inline]
     pub fn lsb(&self) -> bool {
         *self & Block::ONE == Block::ONE
     }
 
+    /// Iterator over bits of the Block.
     #[inline]
     pub fn bits(&self) -> impl Iterator<Item = bool> {
         struct BitIter {
@@ -308,35 +336,41 @@ impl From<&u128> for Block {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-impl From<std::arch::x86_64::__m128i> for Block {
-    #[inline]
-    fn from(value: std::arch::x86_64::__m128i) -> Self {
-        bytemuck::cast(value)
-    }
-}
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod from_arch_impls {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
 
-#[cfg(target_arch = "x86_64")]
-impl From<&std::arch::x86_64::__m128i> for Block {
-    #[inline]
-    fn from(value: &std::arch::x86_64::__m128i) -> Self {
-        bytemuck::cast(*value)
-    }
-}
+    use super::Block;
 
-#[cfg(target_arch = "x86_64")]
-impl From<Block> for std::arch::x86_64::__m128i {
-    #[inline]
-    fn from(value: Block) -> Self {
-        bytemuck::cast(value)
+    impl From<__m128i> for Block {
+        #[inline]
+        fn from(value: __m128i) -> Self {
+            bytemuck::must_cast(value)
+        }
     }
-}
 
-#[cfg(target_arch = "x86_64")]
-impl From<&Block> for std::arch::x86_64::__m128i {
-    #[inline]
-    fn from(value: &Block) -> Self {
-        bytemuck::cast(*value)
+    impl From<&__m128i> for Block {
+        #[inline]
+        fn from(value: &__m128i) -> Self {
+            bytemuck::must_cast(*value)
+        }
+    }
+
+    impl From<Block> for __m128i {
+        #[inline]
+        fn from(value: Block) -> Self {
+            bytemuck::must_cast(value)
+        }
+    }
+
+    impl From<&Block> for __m128i {
+        #[inline]
+        fn from(value: &Block) -> Self {
+            bytemuck::must_cast(*value)
+        }
     }
 }
 

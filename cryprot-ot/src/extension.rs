@@ -1,3 +1,16 @@
+//! Fast OT extension using optimized [[IKNP03](https://www.iacr.org/archive/crypto2003/27290145/27290145.pdf)] (semi-honest)
+//! or [[KOS15]](https://eprint.iacr.org/2015/546.pdf) (malicious) protocol.
+//!
+//! The protocols are optimized for the availability of `aes` and `avx2` target
+//! features for the semi-honest protocol and additionally `pclmulqdq` for the
+//! malicious protocol.
+//!
+//! ## Batching
+//! The protocols automatically compute the OTs in batches to increase
+//! throughput. The [`DEFAULT_OT_BATCH_SIZE`] has been chosen to maximise
+//! throughput in very low latency settings for large numbers of OTs.
+//! The batch size can changed using the corresponding methods on the sender and
+//! receiver (e.g. [`OtExtensionSender::with_batch_size`]).
 use std::{io, iter, marker::PhantomData, mem, panic::resume_unwind, task::Poll};
 
 use bytemuck::cast_slice_mut;
@@ -33,6 +46,7 @@ pub const BASE_OT_COUNT: usize = 128;
 
 pub const DEFAULT_OT_BATCH_SIZE: usize = 2_usize.pow(16);
 
+/// OT extension sender generic over its [`Security`] level.
 pub struct OtExtensionSender<S: Security> {
     rng: StdRng,
     base_ot: SimplestOt,
@@ -44,6 +58,7 @@ pub struct OtExtensionSender<S: Security> {
     security: PhantomData<S>,
 }
 
+/// OT extension receiver generic over its [`Security`] level.
 pub struct OtExtensionReceiver<S: Security> {
     base_ot: SimplestOt,
     conn: Connection,
@@ -53,12 +68,17 @@ pub struct OtExtensionReceiver<S: Security> {
     rng: StdRng,
 }
 
+/// SemiHonest OT extension sender alias.
 pub type SemiHonestOtExtensionSender = OtExtensionSender<SemiHonestMarker>;
+/// SemiHonest OT extension receiver alias.
 pub type SemiHonestOtExtensionReceiver = OtExtensionReceiver<SemiHonestMarker>;
 
+/// Malicious OT extension sender alias.
 pub type MaliciousOtExtensionSender = OtExtensionSender<MaliciousMarker>;
+/// Malicious OT extension receiver alias.
 pub type MaliciousOtExtensionReceiver = OtExtensionReceiver<MaliciousMarker>;
 
+/// Error type returned by the OT extension protocols.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -82,10 +102,14 @@ pub enum Error {
 }
 
 impl<S: Security> OtExtensionSender<S> {
+    /// Create a new sender for the given [`Connection`].
     pub fn new(conn: Connection) -> Self {
         Self::new_with_rng(conn, StdRng::from_os_rng())
     }
 
+    /// Create a new sender for the given [`Connection`] and [`StdRng`].
+    ///
+    /// For an rng seeded with a fixed seed, the output is deterministic.
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
         let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
         Self {
@@ -100,19 +124,30 @@ impl<S: Security> OtExtensionSender<S> {
         }
     }
 
+    /// Set the OT batch size for the sender.
+    ///
+    /// If the sender batch size is changed, the receiver's must also be changed
+    /// (see [`OtExtensionReceiver::with_batch_size`]).
+    /// Note that [`OtExtensionSender::send`] methods will fail if `count %
+    /// self.batch_size()` is not divisable by 128.
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
     }
 
+    /// The currently configured OT batch size.
     pub fn batch_size(&self) -> usize {
         self.batch_size
     }
 
+    /// Returns true if base OTs have been performed. Subsequent calls to send
+    /// will not perform base OTs again.
     pub fn has_base_ots(&self) -> bool {
         self.base_rngs.len() == BASE_OT_COUNT
     }
 
+    /// Perform base OTs for later extension. Subsequent calls to send
+    /// will not perform base OTs again.
     pub async fn do_base_ots(&mut self) -> Result<(), Error> {
         let base_choices = random_choices(BASE_OT_COUNT, &mut self.rng);
         let base_ots = self.base_ot.receive(&base_choices).await?;
@@ -130,6 +165,8 @@ impl<S: Security> Connected for OtExtensionSender<S> {
 }
 
 impl SemiHonest for OtExtensionSender<SemiHonestMarker> {}
+/// A maliciously secure sender also offers semi-honest security at decreased
+/// performance.
 impl SemiHonest for OtExtensionSender<MaliciousMarker> {}
 
 impl Malicious for OtExtensionSender<MaliciousMarker> {}
@@ -339,10 +376,14 @@ impl SemiHonest for OtExtensionReceiver<MaliciousMarker> {}
 impl Malicious for OtExtensionReceiver<MaliciousMarker> {}
 
 impl<S: Security> OtExtensionReceiver<S> {
+    /// Create a new sender for the given [`Connection`].
     pub fn new(conn: Connection) -> Self {
         Self::new_with_rng(conn, StdRng::from_os_rng())
     }
 
+    /// Create a new sender for the given [`Connection`] and [`StdRng`].
+    ///
+    /// For an rng seeded with a fixed seed, the output is deterministic.
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
         let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
         Self {
@@ -355,20 +396,30 @@ impl<S: Security> OtExtensionReceiver<S> {
         }
     }
 
+    /// Set the OT batch size for the receiver.
+    ///
+    /// If the receiver batch size is changed, the senders's must also be
+    /// changed (see [`OtExtensionSender::with_batch_size`]).
+    /// Note that [`OtExtensionReceiver::receive`] methods will fail if `count %
+    /// self.batch_size()` is not divisable by 128.
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
     }
 
+    /// The currently configured OT batch size.
     pub fn batch_size(&self) -> usize {
         self.batch_size
     }
 
+    /// Returns true if base OTs have been performed. Subsequent calls to send
+    /// will not perform base OTs again.
     pub fn has_base_ots(&self) -> bool {
         self.base_rngs.len() == BASE_OT_COUNT
     }
 
-    #[tracing::instrument(level = Level::DEBUG, skip(self))]
+    /// Perform base OTs for later extension. Subsequent calls to send
+    /// will not perform base OTs again.
     pub async fn do_base_ots(&mut self) -> Result<(), Error> {
         let base_ots = self.base_ot.send(BASE_OT_COUNT).await?;
         self.base_rngs = base_ots

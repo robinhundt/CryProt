@@ -1,3 +1,51 @@
+//! CryProt-OT implements several [oblivious transfer](https://en.wikipedia.org/wiki/Oblivious_transfer) protocols.
+//!
+//! - base OT: "Simplest OT" [[CO15](https://eprint.iacr.org/2015/267)]
+//! - semi-honest OT extension: optimized [[IKNP03](https://www.iacr.org/archive/crypto2003/27290145/27290145.pdf)]
+//!   protocol
+//! - malicious OT extension: optimized [[KOS15]](https://eprint.iacr.org/2015/546.pdf)
+//!   protocol
+//! - silent OT extension: [[BCG+19](https://eprint.iacr.org/2019/1159)] silent OT
+//!   using [[RRT23](https://eprint.iacr.org/2023/882)] code (semi-honest and malicious
+//!   with [[YWL+20](https://dl.acm.org/doi/pdf/10.1145/3372297.3417276)]
+//!   consistency check)
+//!
+//! This library is heavily inspired by and in parts a port of the C++ [libOTe](https://github.com/osu-crypto/libOTe) library.
+//!
+//! ## Benchmarks
+//! We continously run the benchmark suite in CI witht the results publicly
+//! available on [bencher.dev](https://bencher.dev/perf/cryprot/plots). The raw criterion output, including throughput is
+//! available in the logs of the [bench workflow](https://github.com/robinhundt/CryProt/actions/workflows/bench.yml)
+//! (latest run > benchmarks job > Run Benchmarks step).
+//!
+//! ## OT Extension Benchmarks
+//! Following are benchmark numbers for several OT protocols on a 4-core VM
+//! running on an AMD EPYC 9454P. For up to date benchmarks view the links in
+//! the benchmarks section. Each OT sender/receiver uses one worker thread and
+//! number of cores many background threads for communication (which by default
+//! is also encrypted as part of QUIC).
+//!
+//! | Benchmark                                         | Mean Throughput (million OT/s) |
+//! |--------------------------------------------------|--------------------------|
+//! | Semi-honest R-OT ext. (2^24 R-OTs)       | 51.539                   |
+//! | Malicious R-OT ext. (2^24 R-OTs)         | 33.663                   |
+//! | Semi-Honest Silent C-OT ext. (2^21 C-OTs)          | 4.2306                   |
+//! | Semi-Honest Silent R-OT ext. (2^21 R-OTs)              | 9.5426                   |
+//! | Malicious Silent R-OT ext. (2^21 R-OTs)    | 7.4180                   |
+//!
+//! Silent OT will perform faster for smaller numbers of OTs at slightly
+//! increased communication.
+//!
+//! Our OT implementations should be on par or faster than those in libOTe. In
+//! the future we want to benchmark libOTe on the same hardware for a fair
+//! comparison.
+//!
+//! **Base OT Benchmark:**
+//!
+//! | Benchmark      | Mean Time (ms) |
+//! |---------------|---------------|
+//! | 128 base R-OTs   | 28.001        |
+
 use std::{fmt::Debug, future::Future};
 
 use cryprot_core::{Block, buf::Buf};
@@ -12,13 +60,20 @@ pub mod noisy_vole;
 pub mod phase;
 pub mod silent_ot;
 
+/// Trait for OT receivers/senders which hold a [`Connection`].
 pub trait Connected {
     fn connection(&mut self) -> &mut Connection;
 }
 
+/// A random OT sender.
 pub trait RotSender: Connected + Send {
+    /// The error type returned by send operations.
     type Error;
 
+    /// Send `count` many random OTs.
+    ///
+    /// For better performance, use [RotSender::send_into] with an existing
+    /// [`Buf`].
     fn send(
         &mut self,
         count: usize,
@@ -32,6 +87,10 @@ pub trait RotSender: Connected + Send {
 
     /// Store OTs in the provided [`Buf`]fer.
     ///
+    /// Note that implementations might temporarily take ownership of the
+    /// [`Buf`] pointed to by `ots`. If the future returned by this method is
+    /// dropped befire completion, `ots` might point at an empty `Buf`.
+    ///
     /// For large number of OTs, using
     /// [`HugePageMemory`](`cryprot_core::alloc::HugePageMemory`) can
     /// significantly improve performance on Linux systems.
@@ -41,15 +100,15 @@ pub trait RotSender: Connected + Send {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
+/// A random OT receiver.
 pub trait RotReceiver: Connected + Send {
+    /// The error type returned by receive operations.
     type Error;
 
-    fn receive_into(
-        &mut self,
-        choices: &[Choice],
-        ots: &mut impl Buf<Block>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-
+    /// Receive `choices.len()` many random OTs.
+    ///
+    /// For better performance, use [RotReceiver::receive_into] with an existing
+    /// [`Buf`].
     fn receive(
         &mut self,
         choices: &[Choice],
@@ -60,6 +119,21 @@ pub trait RotReceiver: Connected + Send {
             Ok(ots)
         }
     }
+
+    /// Store OTs in the provided [`Buf`]fer.
+    ///
+    /// Note that implementations might temporarily take ownership of the
+    /// [`Buf`] pointed to by `ots`. If the future returned by this method is
+    /// dropped befire completion, `ots` might point at an empty `Buf`.
+    ///
+    /// For large number of OTs, using
+    /// [`HugePageMemory`](`cryprot_core::alloc::HugePageMemory`) can
+    /// significantly improve performance on Linux systems.
+    fn receive_into(
+        &mut self,
+        choices: &[Choice],
+        ots: &mut impl Buf<Block>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
 /// Marker trait for R-OT Senders that are paired with a random choice receiver.
@@ -69,11 +143,7 @@ pub trait RandChoiceRotSender {}
 pub trait RandChoiceRotReceiver: Connected + Send {
     type Error;
 
-    fn rand_choice_receive_into(
-        &mut self,
-        ots: &mut impl Buf<Block>,
-    ) -> impl Future<Output = Result<Vec<Choice>, Self::Error>> + Send;
-
+    /// Receive `count` many random OTs alongside their respective choices.
     fn rand_choice_receive(
         &mut self,
         count: usize,
@@ -84,8 +154,17 @@ pub trait RandChoiceRotReceiver: Connected + Send {
             Ok((ots, choices))
         }
     }
+
+    /// Receive `ots.len()` many random OTs, stored into the buffer pointed to
+    /// by `ots` and returns the corresponding choices.
+    fn rand_choice_receive_into(
+        &mut self,
+        ots: &mut impl Buf<Block>,
+    ) -> impl Future<Output = Result<Vec<Choice>, Self::Error>> + Send;
 }
 
+/// Adapt any [`RotReceiver`] into a [`RandChoiceRotReceiver`] by securely
+/// sampling the random choices using [`random_choices`].
 impl<R: RotReceiver> RandChoiceRotReceiver for R {
     type Error = R::Error;
 
@@ -134,6 +213,7 @@ mod private {
     impl Sealed for super::MaliciousMarker {}
 }
 
+/// Sample `count` many [`Choice`]es using the provided rng.
 pub fn random_choices<RNG: Rng + CryptoRng>(count: usize, rng: &mut RNG) -> Vec<Choice> {
     let uniform = distr::Uniform::new(0, 2).expect("correct range");
     uniform

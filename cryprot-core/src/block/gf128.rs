@@ -37,7 +37,7 @@ impl Block {
 
     /// Multiplication over GF(2^128).
     ///
-    /// Uses the irreducible polynomial `x^128 + x^7` + x^2 + x + 1.
+    /// Uses the irreducible polynomial `x^128 + x^7 + x^2 + x + 1.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[inline]
     pub fn gf_mul(&self, rhs: &Self) -> Self {
@@ -51,14 +51,14 @@ impl Block {
 
     /// Multiplication over GF(2^128).
     ///
-    /// Uses the irreducible polynomial `x^128 + x^7` + x^2 + x + 1`.
+    /// Uses the irreducible polynomial `x^128 + x^7 + x^2 + x + 1`.
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     #[inline]
     pub fn gf_mul(&self, rhs: &Self) -> Self {
         scalar::gf128_mul(self.into(), rhs.into()).into()
     }
 
-    /// Reduce polynomial over GF(2) by `x^128 + x^7` + x^2 + x + 1`.
+    /// Reduce polynomial over GF(2) by `x^128 + x^7 + x^2 + x + 1`.
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     #[inline]
     pub fn gf_reduce(low: &Self, high: &Self) -> Self {
@@ -70,7 +70,7 @@ impl Block {
         }
     }
 
-    /// Reduce polynomial over GF(2) by `x^128 + x^7` + x^2 + x + 1`.
+    /// Reduce polynomial over GF(2) by `x^128 + x^7 + x^2 + x + 1`.
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     #[inline]
     pub fn gf_reduce(low: &Self, high: &Self) -> Self {

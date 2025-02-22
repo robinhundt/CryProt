@@ -1,4 +1,4 @@
-//! [`tracing_subscriber::Layer`] for structured communication metrics
+//! [`tracing_subscriber::Layer`] for structured communication metrics.
 //!
 //! The [`CommLayer`] is a [`tracing_subscriber::Layer`] which records numbers
 //! of bytes read and written. Metrics are collected by

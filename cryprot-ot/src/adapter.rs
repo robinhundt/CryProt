@@ -1,8 +1,16 @@
+//! Adapters for OT types.
+
 use bitvec::{order::Lsb0, vec::BitVec};
 use futures::{SinkExt, StreamExt};
 
 use crate::{Connected, RandChoiceRotReceiver, RandChoiceRotSender, RotReceiver, RotSender};
 
+/// Adapts a [`RandChoiceRotReceiver`] into a [`RotReceiver`] and
+/// [`RandChoiceRotSender`] into [`RotSender`].
+///
+/// This adapter can be used to adapt the [silent OT](`crate::silent_ot`)
+/// protocol into a protocol with chosen choice bits at the cost number of OTs
+/// bits of communication.
 #[derive(Debug)]
 pub struct ChosenChoice<P>(P);
 

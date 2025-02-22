@@ -1,3 +1,4 @@
+//! A networking library providing abstractions on top [`s2n_quic`].
 use std::{
     collections::{HashMap, hash_map::Entry},
     future::Future,
@@ -103,7 +104,8 @@ pub type SendStream<T> = SymmetricallyFramed<
     SymmetricalBincode<T>,
 >;
 
-pub type TempSendStream<'a, T> = SymmetricallyFramed<
+/// A temporary typed send stream which borrows a [`SendStreamBytes`].
+pub type SendStreamTemp<'a, T> = SymmetricallyFramed<
     FramedWrite<&'a mut SendStreamBytes, LengthDelimitedCodec>,
     T,
     SymmetricalBincode<T>,
@@ -116,6 +118,7 @@ pub type ReceiveStream<T> = SymmetricallyFramed<
     SymmetricalBincode<T>,
 >;
 
+/// A temporary typed receive stream which borrows a [`ReceiveStreamBytes`].
 pub type ReceiveStreamTemp<'a, T> = SymmetricallyFramed<
     FramedRead<&'a mut ReceiveStreamBytes, LengthDelimitedCodec>,
     T,
@@ -232,6 +235,7 @@ impl StreamManager {
     }
 }
 
+/// Possible connection errors.
 #[derive(thiserror::Error, Debug)]
 pub enum ConnectionError {
     #[error("Unable to open stream")]
@@ -441,6 +445,7 @@ impl UniqueId {
     }
 }
 
+/// Possible byte stream errors.
 #[derive(thiserror::Error, Debug)]
 pub enum StreamError {
     #[error("unable to flush stream")]
@@ -464,7 +469,7 @@ impl SendStreamBytes {
         self.inner.close().await.map_err(StreamError::Close)
     }
 
-    pub fn as_stream<T: Serialize>(&mut self) -> TempSendStream<T> {
+    pub fn as_stream<T: Serialize>(&mut self) -> SendStreamTemp<T> {
         let framed_send = default_codec().new_write(self);
         SymmetricallyFramed::new(framed_send, Bincode::default())
     }

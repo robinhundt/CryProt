@@ -3,8 +3,7 @@ use wide::{i8x16, i64x2};
 /// Transpose a bit matrix.
 ///
 /// # Panics
-/// If the input is not divisable by 128.
-/// If the number of columns (= input.len() * 8 / 128) is less than 128.
+/// TODO
 pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     assert!(rows >= 16);
     assert_eq!(0, rows % 16);

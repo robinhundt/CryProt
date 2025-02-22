@@ -1,3 +1,5 @@
+//! Transpose bit-matrices fast.
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub mod avx2;
 pub mod portable;
@@ -5,7 +7,7 @@ pub mod portable;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 cpufeatures::new!(target_feature_avx2, "avx2");
 
-/// Transpose bit matrix.
+/// Transpose a bit matrix.
 ///
 /// # Panics
 /// If `rows % 128 != 0`

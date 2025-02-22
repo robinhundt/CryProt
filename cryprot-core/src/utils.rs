@@ -1,3 +1,4 @@
+//! Small utility functions such as [`xor_inplace`].
 use std::ops::{BitAndAssign, BitXorAssign};
 
 pub fn xor_inplace<T: Copy + BitXorAssign>(a: &mut [T], b: &[T]) {

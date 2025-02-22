@@ -1,3 +1,6 @@
+//! Noisy-Vole computes for chosen c and delta, a and b s.t. a = b + c * delta
+//! in GF(2^128).
+
 use std::io;
 
 use bitvec::{order::Lsb0, vec::BitVec};
@@ -7,6 +10,9 @@ use cryprot_net::{Connection, ConnectionError};
 use rand::{Rng, SeedableRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::Level;
+
+use crate::phase;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -29,6 +35,7 @@ impl NoisyVoleSender {
     ///
     /// Operations are performed in GF(2^128). Note that the bits of `delta`
     /// must be equal to the choice bits for the passed base OTs.
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::NOISY_VOLE))]
     pub async fn send(
         &mut self,
         size: usize,
@@ -78,6 +85,7 @@ impl NoisyVoleReceiver {
     /// Operations are performed in GF(2^128). Note that the bits of `delta` for
     /// the [`NoisyVoleSender`] must be equal to the choice bits for the
     /// passed base OTs.
+    #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::NOISY_VOLE))]
     pub async fn receive(
         &mut self,
         c: Vec<Block>,

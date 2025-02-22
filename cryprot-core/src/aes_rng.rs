@@ -1,13 +1,20 @@
+//! RNG based on AES in CTR mode.
+//!
+//! This implementation is based on the implementation given in the
+//! [scuttlebutt](https://github.com/GaloisInc/swanky/blob/4455754abadee07f168079ac45ef33535b0df27d/scuttlebutt/src/rand_aes.rs)
+//! crate. Instead of using an own AES implementation, [`AesRng`](`AesRng`) uses
+//! the [aes](`aes`) crate.
+//!
+//! On platforms wwith hardware accelerated AES instructions, the [`AesRng`] can
+//! generate multiple GiB of random data per second. Make sure to compile with
+//! the `aes` target feature enabled to have optimal performance without runtime
+//! detection of the feature.
 use std::mem;
 
-use aes::Aes128;
-/// RNG based on AES in CTR-like mode.
-///
-/// This implementation is based on the implementation given in the
-/// [scuttlebutt](https://github.com/GaloisInc/swanky/blob/4455754abadee07f168079ac45ef33535b0df27d/scuttlebutt/src/rand_aes.rs)
-/// crate. Instead of using an own AES implementation, [`AesRng`](`AesRng`) uses
-/// the [aes](`aes`) crate.
-use aes::cipher::{BlockCipherEncrypt, KeyInit};
+use aes::{
+    Aes128,
+    cipher::{BlockCipherEncrypt, KeyInit},
+};
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use rand_core::block::{BlockRng, BlockRngCore, CryptoBlockRng};
 
@@ -16,8 +23,8 @@ use crate::{AES_PAR_BLOCKS, Block};
 // TODO i think softspoken ot has some implementation performance optimizations
 // see sect 7 https://eprint.iacr.org/2022/192.pdf
 
-/// This uses AES in a counter-mode-esque way, but with the counter always
-/// starting at zero. When used as a PRNG this is okay [TODO: citation?].
+/// This uses AES in a counter-mode to implement a PRG. TODO: Citation for
+/// why/when this is secure.
 #[derive(Clone, Debug)]
 pub struct AesRng(BlockRng<AesRngCore>);
 

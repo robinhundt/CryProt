@@ -1,4 +1,10 @@
 #![cfg_attr(feature = "nightly", feature(test))]
+//! Core utilites for cryptographic protocols.
+//!
+//! This crate implements several core utilities for cryptographic protocols.
+//! The most important type is the 128-bit [`Block`]. As we generally use a
+//! security parameter of 128 bits, this type is a convenient way of storing
+//! security parameter many bits.
 
 pub mod aes_hash;
 pub mod aes_rng;
@@ -14,8 +20,15 @@ pub mod utils;
 
 pub use block::Block;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+/// Number of Blocks for which hardware accelerated AES can make use of ILP.
+///
+/// This corresponds to `ParBlocksSize` in [`aes::cipher::ParBlocksSizeUser`]
+/// for the SIMD backend on the target architecture. This means, that this
+/// constant depends on the target architecture and is different on `x86_64` and
+/// `aarch64`.
+/// Do not depend on the value of the constant.
 // https://github.com/RustCrypto/block-ciphers/blob/4da9b802de52a3326fdc74d559caddd57042fed2/aes/src/ni.rs#L43
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub const AES_PAR_BLOCKS: usize = 9;
 #[cfg(target_arch = "aarch64")]
 // https://github.com/RustCrypto/block-ciphers/blob/4da9b802de52a3326fdc74d559caddd57042fed2/aes/src/armv8.rs#L32

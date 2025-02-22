@@ -173,6 +173,15 @@ pub unsafe fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
     }
 }
 
+/// Transpose a bit matrix.
+///
+/// # Panics
+/// If the input is not divisable by 128.
+/// If the number of columns (= input.len() * 8 / 128) is less than 128.
+/// If `input.len() != output.len()`
+///
+/// # Safety
+/// AVX2 instruction set must be available.
 #[target_feature(enable = "avx2")]
 pub unsafe fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     assert_eq!(input.len(), output.len());

@@ -1,3 +1,5 @@
+//! Simplest-OT base OT protocol by [[CO15]](https://eprint.iacr.org/2015/267) (malicious security).
+
 use std::io;
 
 use cryprot_core::{

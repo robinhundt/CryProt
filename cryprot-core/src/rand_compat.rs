@@ -1,3 +1,4 @@
+//! Compatability wrapper between rand_core 0.9 and rand_core 0.6.
 use rand::{CryptoRng, RngCore};
 
 /// Compatability wrapper between rand_core 0.9 and rand_core 0.6.

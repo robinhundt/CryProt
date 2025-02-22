@@ -12,6 +12,7 @@ use bytemuck::Pod;
 
 use crate::{AES_PAR_BLOCKS, Block, utils::xor_inplace};
 
+/// AES accelerated hashing of [`Block`]s.
 pub struct AesHash {
     aes: Aes128,
 }
@@ -71,6 +72,13 @@ impl AesHash {
         xor_inplace(out, inp);
     }
 
+    /// Correlation robust hash of a slice of blocks.
+    ///
+    /// Warning: only secure in semi-honest setting!
+    /// See <https://eprint.iacr.org/2019/074> for details.
+    ///
+    /// In most cases, this method will be the most performant, as it can make
+    /// use of AES instruction level parallelism.
     pub fn cr_hash_slice_mut(&self, x: &mut [Block]) {
         let mut tmp = [aes::Block::default(); AES_PAR_BLOCKS];
 
@@ -85,6 +93,9 @@ impl AesHash {
         }
     }
 
+    /// Tweakable circular correlation robust hash function.
+    ///
+    /// See <https://eprint.iacr.org/2019/074> for details. This is the TMMO function.
     pub fn tccr_hash_slice_mut(&self, x: &mut [Block], mut tweak_fn: impl FnMut(usize) -> Block) {
         let mut tmp = [aes::Block::default(); AES_PAR_BLOCKS];
         for (chunk_idx, chunk) in x.chunks_mut(AES_PAR_BLOCKS).enumerate() {

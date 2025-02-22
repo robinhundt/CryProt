@@ -1,3 +1,4 @@
+//! Expand-convolute code of [[RRT23](https://eprint.iacr.org/2023/882)].
 use std::mem;
 
 use bytemuck::{cast, cast_slice_mut};
@@ -19,6 +20,7 @@ pub struct ExConvCode {
     message_size: usize,
 }
 
+/// Configugarion for the [`ExConvCode`].
 #[derive(Debug, Clone, Copy)]
 pub struct ExConvCodeConfig {
     pub seed: Block,
@@ -45,10 +47,13 @@ impl Default for ExConvCodeConfig {
 const CC_BLOCK: Block = Block::new([0xcc; 16]);
 
 impl ExConvCode {
+    /// Create a new code for the given `message_size`, by default `code_size =
+    /// 2 * message_size`.
     pub fn new(message_size: usize) -> Self {
         Self::new_with_conf(message_size, ExConvCodeConfig::default())
     }
 
+    /// Create a new code with the provided configuration.
     pub fn new_with_conf(message_size: usize, mut conf: ExConvCodeConfig) -> Self {
         if conf.code_size == 0 {
             conf.code_size = 2 * message_size;
@@ -86,10 +91,22 @@ impl ExConvCode {
         self.message_size
     }
 
+    pub fn code_size(&self) -> usize {
+        self.conf.code_size
+    }
+
     pub fn conf(&self) -> &ExConvCodeConfig {
         &self.conf
     }
 
+    /// Encode e.
+    ///
+    /// For maximum performance, the crate needs to be compiled with
+    /// `target_feature = sse4.1` enabled. Otherwise a slower scalar fallback is
+    /// used.
+    ///
+    /// # Panics
+    /// If `e.len() != self.code_size()`.
     pub fn dual_encode<T: Coeff>(&self, e: &mut [T]) {
         assert_eq!(self.conf.code_size, e.len(), "e must have len of code_size");
         let (prefix, suffix) = e.split_at_mut(self.message_size);

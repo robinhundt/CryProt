@@ -14,6 +14,14 @@ use crate::alloc::{HugePageMemory, allocate_zeroed_vec};
 pub trait Buf<T>:
     Default + Debug + Deref<Target = [T]> + DerefMut + Send + Sync + 'static + private::Sealed
 {
+    /// The 'kind' of this Buf implementation. This is e.g. `Vec<E>` for `Vec<T>
+    /// as Buf<T>`.
+    ///
+    /// This associated type can be used to create Bufs of the same kind, but
+    /// with a different inner type.
+    type BufKind<E>: Buf<E>
+    where
+        E: Zeroable + Clone + Default + Debug + Send + Sync + 'static;
     /// Create a new `Buf` of length `len` with all elements set to zero.
     ///
     /// Implementations of this directly allocate zeroed memory and do not write
@@ -41,6 +49,11 @@ pub trait Buf<T>:
 }
 
 impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for Vec<T> {
+    type BufKind<E>
+        = Vec<E>
+    where
+        E: Zeroable + Clone + Default + Debug + Send + Sync + 'static;
+
     fn zeroed(len: usize) -> Self {
         allocate_zeroed_vec(len)
     }
@@ -66,6 +79,11 @@ impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for V
 }
 
 impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for HugePageMemory<T> {
+    type BufKind<E>
+        = HugePageMemory<E>
+    where
+        E: Zeroable + Clone + Default + Debug + Send + Sync + 'static;
+
     fn zeroed(len: usize) -> Self {
         HugePageMemory::zeroed(len)
     }

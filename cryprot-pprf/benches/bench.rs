@@ -54,9 +54,13 @@ fn criterion_benchmark(c: &mut Criterion) {
                     sender
                         .expand(Block::ONES, seed, OutFormat::Interleaved, &mut out1)
                         .await
+                        .unwrap()
                 });
                 let t2 = tokio::spawn(async move {
-                    receiver.expand(OutFormat::Interleaved, &mut out2).await
+                    receiver
+                        .expand(OutFormat::Interleaved, &mut out2)
+                        .await
+                        .unwrap()
                 });
                 tokio::try_join!(t1, t2).unwrap();
             },

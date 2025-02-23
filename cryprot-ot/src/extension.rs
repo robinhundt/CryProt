@@ -36,8 +36,9 @@ use tokio::{
 use tracing::Level;
 
 use crate::{
-    Connected, Malicious, MaliciousMarker, RotReceiver, RotSender, Security, SemiHonest,
-    SemiHonestMarker,
+    Connected, CotReceiver, CotSender, Malicious, MaliciousMarker, RotReceiver, RotSender,
+    Security, SemiHonest, SemiHonestMarker,
+    adapter::CorrelatedFromRandom,
     base::{self, SimplestOt},
     phase, random_choices,
 };
@@ -448,8 +449,8 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
     #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::OT_EXTENSION))]
     async fn receive_into(
         &mut self,
-        choices: &[Choice],
         ots: &mut impl Buf<Block>,
+        choices: &[Choice],
     ) -> Result<(), Self::Error> {
         assert_eq!(choices.len(), ots.len());
         assert_eq!(
@@ -621,6 +622,41 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
     }
 }
 
+impl<S: Security> CotSender for OtExtensionSender<S> {
+    type Error = Error;
+
+    async fn correlated_send_into<B, F>(
+        &mut self,
+        ots: &mut B,
+        correlation: F,
+    ) -> Result<(), Self::Error>
+    where
+        B: Buf<Block>,
+        F: FnMut(usize) -> Block + Send,
+    {
+        CorrelatedFromRandom::new(self)
+            .correlated_send_into(ots, correlation)
+            .await
+    }
+}
+
+impl<S: Security> CotReceiver for OtExtensionReceiver<S> {
+    type Error = Error;
+
+    async fn correlated_receive_into<B>(
+        &mut self,
+        ots: &mut B,
+        choices: &[Choice],
+    ) -> Result<(), Self::Error>
+    where
+        B: Buf<Block>,
+    {
+        CorrelatedFromRandom::new(self)
+            .correlated_receive_into(ots, choices)
+            .await
+    }
+}
+
 fn commit(b: Block) -> random_oracle::Hash {
     random_oracle::hash(b.as_bytes())
 }
@@ -651,11 +687,12 @@ impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
 #[cfg(test)]
 mod tests {
 
+    use cryprot_core::Block;
     use cryprot_net::testing::{init_tracing, local_conn};
     use rand::{SeedableRng, rngs::StdRng};
 
     use crate::{
-        MaliciousMarker, RotReceiver, RotSender,
+        CotReceiver, CotSender, MaliciousMarker, RotReceiver, RotSender,
         extension::{
             DEFAULT_OT_BATCH_SIZE, OtExtensionReceiver, OtExtensionSender,
             SemiHonestOtExtensionReceiver, SemiHonestOtExtensionSender,
@@ -728,6 +765,30 @@ mod tests {
             tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
         for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
             assert_eq!(r, s[c.unwrap_u8() as usize]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_correlated_extension() {
+        let _g = init_tracing();
+        const COUNT: usize = 128;
+        let (c1, c2) = local_conn().await.unwrap();
+        let rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(24);
+        let choices = random_choices(COUNT, &mut rng2);
+        let mut sender = SemiHonestOtExtensionSender::new_with_rng(c1, rng1);
+        let mut receiver = SemiHonestOtExtensionReceiver::new_with_rng(c2, rng2);
+        let (send_ots, recv_ots) = tokio::try_join!(
+            sender.correlated_send(COUNT, |_| Block::ONES),
+            receiver.correlated_receive(&choices)
+        )
+        .unwrap();
+        for (i, ((r, s), c)) in recv_ots.into_iter().zip(send_ots).zip(choices).enumerate() {
+            if bool::from(c) {
+                assert_eq!(r ^ Block::ONES, s, "Block {i}");
+            } else {
+                assert_eq!(r, s, "Block {i}")
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use cryprot_core::{Block, alloc::HugePageMemory};
 use cryprot_net::testing::{init_bench_tracing, local_conn};
 use cryprot_ot::{
-    RotReceiver, RotSender,
+    CotReceiver, CotSender, RotReceiver, RotSender,
     base::SimplestOt,
     extension::{
         MaliciousOtExtensionReceiver, MaliciousOtExtensionSender, SemiHonestOtExtensionReceiver,
@@ -99,7 +99,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                         }),
                         tokio::spawn(async move {
                             receiver
-                                .receive_into(&choices, &mut receiver_ots)
+                                .receive_into(&mut receiver_ots, &choices)
                                 .await
                                 .unwrap();
                             receiver_ots
@@ -113,64 +113,53 @@ fn criterion_benchmark(c: &mut Criterion) {
         })
     });
 
-    g.bench_function(format!("2 parallel 2**{p} extension OTs"), |b| {
+    g.bench_function(format!("2**{p} correlated extension OTs"), |b| {
         b.to_async(&rt).iter_custom(|iters| {
             let mut c11 = c1.sub_connection();
             let mut c22 = c2.sub_connection();
+
             async move {
                 let mut duration = Duration::ZERO;
+                let mut sender_ots = HugePageMemory::zeroed(count);
+                let mut receiver_ots = HugePageMemory::zeroed(count);
                 for _ in 0..iters {
-                    let (
-                        mut sender1,
-                        mut receiver1,
-                        mut sender2,
-                        mut receiver2,
-                        choices1,
-                        choices2,
-                    ) = {
+                    // setup not included in duration
+                    let (mut sender, mut receiver, choices) = {
                         let mut rng1 = StdRng::seed_from_u64(42);
-                        let mut rng2 = StdRng::seed_from_u64(42 * 42);
-                        let choices1 = random_choices(count, &mut rng1);
-                        let choices2 = random_choices(count, &mut rng2);
-                        let mut sender1 = SemiHonestOtExtensionSender::new_with_rng(
-                            c11.sub_connection(),
-                            rng1.clone(),
-                        );
-                        let mut receiver1 = SemiHonestOtExtensionReceiver::new_with_rng(
-                            c22.sub_connection(),
-                            rng2.clone(),
-                        );
-
-                        let mut sender2 =
+                        let rng2 = StdRng::seed_from_u64(42 * 42);
+                        let choices = random_choices(count, &mut rng1);
+                        let mut sender =
                             SemiHonestOtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
-                        let mut receiver2 =
+                        let mut receiver =
                             SemiHonestOtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
-
-                        tokio::try_join!(
-                            sender1.do_base_ots(),
-                            receiver1.do_base_ots(),
-                            sender2.do_base_ots(),
-                            receiver2.do_base_ots()
-                        )
-                        .unwrap();
-                        (sender1, receiver1, sender2, receiver2, choices1, choices2)
+                        tokio::try_join!(sender.do_base_ots(), receiver.do_base_ots()).unwrap();
+                        (sender, receiver, choices)
                     };
                     let now = Instant::now();
-                    let jh1 = tokio::spawn(async move { sender1.send(count).await });
-                    let jh2 = tokio::spawn(async move { receiver1.receive(&choices1).await });
-                    let jh3 = tokio::spawn(async move { sender2.send(count).await });
-                    let jh4 = tokio::spawn(async move { receiver2.receive(&choices2).await });
-                    let (ot1, ot2, ot3, ot4) = tokio::try_join!(jh1, jh2, jh3, jh4).unwrap();
+                    (sender_ots, receiver_ots) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender
+                                .correlated_send_into(&mut sender_ots, |_| Block::ONES)
+                                .await
+                                .unwrap();
+                            sender_ots
+                        }),
+                        tokio::spawn(async move {
+                            receiver
+                                .correlated_receive_into(&mut receiver_ots, &choices)
+                                .await
+                                .unwrap();
+                            receiver_ots
+                        })
+                    )
+                    .unwrap();
                     duration += now.elapsed();
-                    ot1.unwrap();
-                    ot2.unwrap();
-                    ot3.unwrap();
-                    ot4.unwrap();
                 }
                 duration
             }
         })
     });
+
     g.finish();
 
     let mut g = c.benchmark_group("malicious OT extension");
@@ -206,7 +195,54 @@ fn criterion_benchmark(c: &mut Criterion) {
                         }),
                         tokio::spawn(async move {
                             receiver
-                                .receive_into(&choices, &mut receiver_ots)
+                                .receive_into(&mut receiver_ots, &choices)
+                                .await
+                                .unwrap();
+                            receiver_ots
+                        })
+                    )
+                    .unwrap();
+                    duration += now.elapsed();
+                }
+                duration
+            }
+        })
+    });
+
+    g.bench_function(format!("2**{p} correlated extension OTs"), |b| {
+        b.to_async(&rt).iter_custom(|iters| {
+            let mut c11 = c1.sub_connection();
+            let mut c22 = c2.sub_connection();
+
+            async move {
+                let mut duration = Duration::ZERO;
+                let mut sender_ots = HugePageMemory::zeroed(count);
+                let mut receiver_ots = HugePageMemory::zeroed(count);
+                for _ in 0..iters {
+                    // setup not included in duration
+                    let (mut sender, mut receiver, choices) = {
+                        let mut rng1 = StdRng::seed_from_u64(42);
+                        let rng2 = StdRng::seed_from_u64(42 * 42);
+                        let choices = random_choices(count, &mut rng1);
+                        let mut sender =
+                            MaliciousOtExtensionSender::new_with_rng(c11.sub_connection(), rng1);
+                        let mut receiver =
+                            MaliciousOtExtensionReceiver::new_with_rng(c22.sub_connection(), rng2);
+                        tokio::try_join!(sender.do_base_ots(), receiver.do_base_ots()).unwrap();
+                        (sender, receiver, choices)
+                    };
+                    let now = Instant::now();
+                    (sender_ots, receiver_ots) = tokio::try_join!(
+                        tokio::spawn(async move {
+                            sender
+                                .correlated_send_into(&mut sender_ots, |_| Block::ONES)
+                                .await
+                                .unwrap();
+                            sender_ots
+                        }),
+                        tokio::spawn(async move {
+                            receiver
+                                .correlated_receive_into(&mut receiver_ots, &choices)
                                 .await
                                 .unwrap();
                             receiver_ots

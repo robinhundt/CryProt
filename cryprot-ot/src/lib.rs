@@ -65,6 +65,12 @@ pub trait Connected {
     fn connection(&mut self) -> &mut Connection;
 }
 
+impl<C: Connected> Connected for &mut C {
+    fn connection(&mut self) -> &mut Connection {
+        (*self).connection()
+    }
+}
+
 /// A random OT sender.
 pub trait RotSender: Connected + Send {
     /// The error type returned by send operations.
@@ -115,7 +121,7 @@ pub trait RotReceiver: Connected + Send {
     ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send {
         async {
             let mut ots = Vec::zeroed(choices.len());
-            self.receive_into(choices, &mut ots).await?;
+            self.receive_into(&mut ots, choices).await?;
             Ok(ots)
         }
     }
@@ -131,9 +137,32 @@ pub trait RotReceiver: Connected + Send {
     /// significantly improve performance on Linux systems.
     fn receive_into(
         &mut self,
-        choices: &[Choice],
         ots: &mut impl Buf<Block>,
+        choices: &[Choice],
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+impl<S: RotSender> RotSender for &mut S {
+    type Error = S::Error;
+
+    fn send_into(
+        &mut self,
+        ots: &mut impl Buf<[Block; 2]>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        (*self).send_into(ots)
+    }
+}
+
+impl<R: RotReceiver> RotReceiver for &mut R {
+    type Error = R::Error;
+
+    fn receive_into(
+        &mut self,
+        ots: &mut impl Buf<Block>,
+        choices: &[Choice],
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        (*self).receive_into(ots, choices)
+    }
 }
 
 /// Marker trait for R-OT Senders that are paired with a random choice receiver.
@@ -173,9 +202,65 @@ impl<R: RotReceiver> RandChoiceRotReceiver for R {
         ots: &mut impl Buf<Block>,
     ) -> Result<Vec<Choice>, Self::Error> {
         let choices = random_choices(ots.len(), &mut StdRng::from_os_rng());
-        self.receive_into(&choices, ots).await?;
+        self.receive_into(ots, &choices).await?;
         Ok(choices)
     }
+}
+
+/// Correlated OT sender (C-OT).
+pub trait CotSender: Connected + Send {
+    type Error;
+
+    /// Random OTs correlated by the `correlation`` function..
+    ///
+    /// The correlation function is passed the index of a C-OT and must output
+    /// the correlation for this C-OT.
+    fn correlated_send<F>(
+        &mut self,
+        count: usize,
+        correlation: F,
+    ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send
+    where
+        F: FnMut(usize) -> Block + Send,
+    {
+        async move {
+            let mut ots = Vec::zeroed(count);
+            self.correlated_send_into(&mut ots, correlation).await?;
+            Ok(ots)
+        }
+    }
+
+    fn correlated_send_into<B, F>(
+        &mut self,
+        ots: &mut B,
+        correlation: F,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send
+    where
+        B: Buf<Block>,
+        F: FnMut(usize) -> Block + Send;
+}
+
+pub trait CotReceiver: Connected + Send {
+    type Error;
+
+    fn correlated_receive(
+        &mut self,
+        choices: &[Choice],
+    ) -> impl Future<Output = Result<Vec<Block>, Self::Error>> + Send {
+        async {
+            let mut ots = Vec::zeroed(choices.len());
+            self.correlated_receive_into(&mut ots, choices).await?;
+            Ok(ots)
+        }
+    }
+
+    fn correlated_receive_into<B>(
+        &mut self,
+        ots: &mut B,
+        choices: &[Choice],
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send
+    where
+        B: Buf<Block>;
 }
 
 /// Marker trait for OT implementations secure against semi-honest adversaries.

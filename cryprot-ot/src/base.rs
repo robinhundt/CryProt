@@ -114,8 +114,8 @@ impl RotReceiver for SimplestOt {
     #[tracing::instrument(target = "cryprot_metrics", level = Level::TRACE, skip_all, fields(phase = phase::BASE_OT))]
     async fn receive_into(
         &mut self,
-        choices: &[Choice],
         ots: &mut impl Buf<Block>,
+        choices: &[Choice],
     ) -> Result<(), Self::Error> {
         assert_eq!(choices.len(), ots.len());
         let (mut send, mut recv) = self.conn.byte_stream().await?;

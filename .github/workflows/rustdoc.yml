@@ -29,7 +29,8 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
       - name: Create Docs
-        run: cargo doc --workspace --verbose --all-features --no-deps -Zunstable-options -Zrustdoc-scrape-examples
+        # rustdoc-map allows us to link to doc.rs for dependencies
+        run: cargo doc --workspace --verbose --all-features --no-deps -Zunstable-options -Zrustdoc-scrape-examples -Zrustdoc-map
       - name: Fix permissions
         run: |
           chmod -c -R +rX "target/doc/" | while read line; do

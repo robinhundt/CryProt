@@ -31,6 +31,7 @@ rand_core_0_6.workspace = true
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 subtle.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"], optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }

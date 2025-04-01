@@ -536,6 +536,7 @@ dependencies = [
  "rayon",
  "serde",
  "subtle",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

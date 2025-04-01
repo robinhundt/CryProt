@@ -1,5 +1,5 @@
 target
-profile.json
+profile.json*
 perf.data*
 
 .flyio

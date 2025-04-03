@@ -184,7 +184,7 @@ where
         B: Buf<Block>,
         F: FnMut(usize) -> Block + Send,
     {
-        let mut r_ots: B::BufKind<[Block; 2]> = B::BufKind::zeroed(ots.len());
+        let mut r_ots = B::zeroed_arr2(ots.len());
         self.0.send_into(&mut r_ots).await?;
         let mut send_buf: Vec<Block> = Vec::zeroed(COR_CHUNK_SIZE);
         let (mut tx, _) = self.connection().byte_stream().await?;

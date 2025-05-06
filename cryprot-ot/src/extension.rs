@@ -26,7 +26,7 @@ use cryprot_core::{
 };
 use cryprot_net::{Connection, ConnectionError};
 use futures::{FutureExt, SinkExt, StreamExt, future::poll_fn};
-use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
+use rand::{Rng, RngCore, SeedableRng, distr::StandardUniform, rngs::StdRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -311,33 +311,42 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
             if S::MALICIOUS_SECURITY {
                 let seed: Block = rng.random();
                 kos_ch_s.send(seed)?;
-                let mut rng = AesRng::from_seed(seed);
+                let rng = AesRng::from_seed(seed);
 
                 let mut q1 = extra_v_mat;
-                let mut q2 = vec![Block::ZERO; 128];
+                let mut q2 = vec![Block::ZERO; BASE_OT_COUNT];
 
                 let owned_v_mat_ref = &owned_v_mat;
-                let batches = count.div_ceil(batch_size);
-                let mut v_iter =
-                    (0..batches)
-                        .zip(batch_sizes_th)
+
+                let challenges: Vec<Block> = rng
+                    .sample_iter(StandardUniform)
+                    .take(ots.len() / BASE_OT_COUNT)
+                    .collect();
+
+                let block_batch_size = batch_size / BASE_OT_COUNT;
+
+                let challenge_iter =
+                    batch_sizes_th
+                        .clone()
+                        .enumerate()
                         .flat_map(|(batch, curr_batch_size)| {
-                            (0..curr_batch_size / 128).flat_map(move |start_idx| {
-                                owned_v_mat_ref
-                                    .iter()
-                                    .skip(batch * batch_size + start_idx)
-                                    .step_by(curr_batch_size / 128)
-                                    .take(128)
-                            })
+                            challenges[batch * block_batch_size
+                                ..batch * block_batch_size + curr_batch_size / BASE_OT_COUNT]
+                                .iter()
+                                .cycle()
+                                .take(curr_batch_size)
                         });
 
-                for _ in 0..ots.len() / 128 {
-                    let s = rng.random();
-                    for ((v, q1i), q2i) in v_iter.by_ref().take(128).zip(&mut q1).zip(&mut q2) {
-                        let (qi, qi2) = v.clmul(&s);
-                        *q1i ^= qi;
-                        *q2i ^= qi2;
-                    }
+                let q_idx_iter = batch_sizes_th.flat_map(|curr_batch_size| {
+                    (0..BASE_OT_COUNT).flat_map(move |t_idx| {
+                        iter::repeat_n(t_idx, curr_batch_size / BASE_OT_COUNT)
+                    })
+                });
+
+                for ((v, s), q_idx) in owned_v_mat_ref.iter().zip(challenge_iter).zip(q_idx_iter) {
+                    let (qi, qi2) = v.clmul(&s);
+                    q1[q_idx] ^= qi;
+                    q2[q_idx] ^= qi2;
                 }
 
                 for (q1i, q2i) in q1.iter_mut().zip(&q2) {
@@ -588,50 +597,58 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                 let seed = kos_ch_r.recv()?;
 
                 let mut t1 = extra_t_mat;
-                let mut t2 = vec![Block::ZERO; 128];
+                let mut t2 = vec![Block::ZERO; BASE_OT_COUNT];
 
                 let mut x1 = Block::from_choices(&extra_choices);
                 let mut x2 = Block::ZERO;
 
-                let mut rng = AesRng::from_seed(seed);
+                let rng = AesRng::from_seed(seed);
 
                 let t_mat_ref = &t_mat;
-                let batches = count.div_ceil(batch_size);
-                let batch_sizes = if batch_size_remainder != 0 {
-                    &mut iter::repeat_n(batch_size, batches - 1)
-                        .chain(iter::once(batch_size_remainder))
-                        as &mut dyn Iterator<Item = _>
-                } else {
-                    &mut iter::repeat_n(batch_size, batches)
-                };
-                let mut t_iter =
-                    (0..batches)
-                        .zip(batch_sizes)
-                        .flat_map(|(batch, curr_batch_size)| {
-                            (0..curr_batch_size / 128).flat_map(move |start_idx| {
-                                t_mat_ref
-                                    .iter()
-                                    .skip(batch * batch_size + start_idx)
-                                    .step_by(curr_batch_size / 128)
-                                    .take(128)
-                            })
-                        });
+                let batches = count / batch_size;
+                let batch_sizes = iter::repeat(batch_size)
+                    .take(batches)
+                    .chain((batch_size_remainder != 0).then_some(batch_size_remainder));
 
-                let choice_blocks = choice_vec
-                    .chunks_exact(16)
-                    .map(|chunk| Block::try_from(chunk).expect("chunk is 16 bytes"));
+                let choice_blocks: Vec<_> = choice_vec
+                    .chunks_exact(Block::BYTES)
+                    .map(|chunk| Block::try_from(chunk).expect("chunk is 16 bytes"))
+                    .collect();
 
-                for x in choice_blocks {
-                    let s = rng.random();
-                    let (xi, xi2) = x.clmul(&s);
+                let challenges: Vec<Block> = rng
+                    .sample_iter(StandardUniform)
+                    .take(choice_blocks.len())
+                    .collect();
+
+                for (x, s) in choice_blocks.iter().zip(challenges.iter()) {
+                    let (xi, xi2) = x.clmul(s);
                     x1 ^= xi;
                     x2 ^= xi2;
+                }
 
-                    for ((t, t1i), t2i) in t_iter.by_ref().take(128).zip(&mut t1).zip(&mut t2) {
-                        let (ti, ti2) = t.clmul(&s);
-                        *t1i ^= ti;
-                        *t2i ^= ti2;
-                    }
+                let block_batch_size = batch_size / BASE_OT_COUNT;
+
+                let challenge_iter =
+                    batch_sizes
+                        .clone()
+                        .enumerate()
+                        .flat_map(|(batch, curr_batch_size)| {
+                            challenges[batch * block_batch_size
+                                ..batch * block_batch_size + curr_batch_size / BASE_OT_COUNT]
+                                .iter()
+                                .cycle()
+                                .take(curr_batch_size)
+                        });
+                let t_idx_iter = batch_sizes.flat_map(|curr_batch_size| {
+                    (0..BASE_OT_COUNT).flat_map(move |t_idx| {
+                        iter::repeat_n(t_idx, curr_batch_size / BASE_OT_COUNT)
+                    })
+                });
+
+                for ((t, s), t_idx) in t_mat_ref.iter().zip(challenge_iter).zip(t_idx_iter) {
+                    let (ti, ti2) = t.clmul(&s);
+                    t1[t_idx] ^= ti;
+                    t2[t_idx] ^= ti2;
                 }
 
                 for (t1i, t2i) in t1.iter_mut().zip(&mut t2) {

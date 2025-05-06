@@ -1,8 +1,14 @@
+//! Implementation of AVX2 BitMatrix transpose based on libOTe.
 use std::{arch::x86_64::*, hint::unreachable_unchecked};
 
 #[inline]
 #[target_feature(enable = "avx2")]
+/// Must be called with `matches!(shift, 2 | 4 | 8 | 16 | 32)`
 unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
+    debug_assert!(
+        matches!(shift, 2 | 4 | 8 | 16 | 32),
+        "Must be called with correct shift"
+    );
     unsafe {
         match shift {
             2 => _mm256_slli_epi64::<2>(a),
@@ -17,7 +23,12 @@ unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
 
 #[inline]
 #[target_feature(enable = "avx2")]
+/// Must be called with `matches!(shift, 2 | 4 | 8 | 16 | 32)`
 unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
+    debug_assert!(
+        matches!(shift, 2 | 4 | 8 | 16 | 32),
+        "Must be called with correct shift"
+    );
     unsafe {
         match shift {
             2 => _mm256_srli_epi64::<2>(a),
@@ -43,8 +54,8 @@ unsafe fn avx_transpose_block_iter1(
 ) {
     if j < (1 << block_size_shift) && block_size_shift == 6 {
         unsafe {
-            let x = &mut *in_out.add(j / 2);
-            let y = &mut *in_out.add(j / 2 + 32);
+            let x = in_out.add(j / 2);
+            let y = in_out.add(j / 2 + 32);
 
             let out_x = _mm256_unpacklo_epi64(*x, *y);
             let out_y = _mm256_unpackhi_epi64(*x, *y);
@@ -65,8 +76,8 @@ unsafe fn avx_transpose_block_iter1(
     }
 
     unsafe {
-        let x = &mut *in_out.add(j / 2);
-        let y = &mut *in_out.add(j / 2 + (1 << (block_size_shift - 1)));
+        let x = in_out.add(j / 2);
+        let y = in_out.add(j / 2 + (1 << (block_size_shift - 1)));
 
         // Special case for 2x2 blocks (block_size_shift == 1)
         if block_size_shift == 1 {

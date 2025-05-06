@@ -20,6 +20,20 @@ pub trait Buf<T>:
     /// zeroes to the elements explicitly.
     fn zeroed(len: usize) -> Self;
 
+    /// Create a new [`Buf`] of the same kind but for two-element arrays of
+    /// `T``.
+    ///
+    /// This method is useful in methods generic over Buf which need a temporary
+    /// buffer over arrays of size two of `T`, that is the same kind of buffer
+    /// the method is called with. That is, a `fn foo(b: impl Buf<T>)`
+    /// called with a [`HugePageMemory`] can use this method to create a
+    /// `HugePageMemory<[T;2]>`.
+    //
+    // Note: Ideally we would use a GAT on Buf for this, but sadly due to
+    // https://github.com/rust-lang/rust-analyzer/issues/19502 in rust-analyzer,
+    // this renders autocomplete unusable in methods generic over Buf.
+    fn zeroed_arr2(len: usize) -> impl Buf<[T; 2]>;
+
     /// Capacity of the `Buf`.
     fn capacity(&self) -> usize;
 
@@ -45,6 +59,10 @@ impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for V
         allocate_zeroed_vec(len)
     }
 
+    fn zeroed_arr2(len: usize) -> impl Buf<[T; 2]> {
+        allocate_zeroed_vec(len)
+    }
+
     fn capacity(&self) -> usize {
         self.capacity()
     }
@@ -67,6 +85,10 @@ impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for V
 
 impl<T: Zeroable + Clone + Default + Debug + Send + Sync + 'static> Buf<T> for HugePageMemory<T> {
     fn zeroed(len: usize) -> Self {
+        HugePageMemory::zeroed(len)
+    }
+
+    fn zeroed_arr2(len: usize) -> impl Buf<[T; 2]> {
         HugePageMemory::zeroed(len)
     }
 

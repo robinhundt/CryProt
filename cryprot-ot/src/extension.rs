@@ -20,14 +20,13 @@ use cryprot_core::{
     aes_rng::AesRng,
     alloc::allocate_zeroed_vec,
     buf::Buf,
-    random_oracle::{self},
     tokio_rayon::spawn_compute,
     transpose::transpose_bitmatrix,
     utils::{and_inplace_elem, xor_inplace},
 };
 use cryprot_net::{Connection, ConnectionError};
 use futures::{FutureExt, SinkExt, StreamExt, future::poll_fn};
-use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
+use rand::{Rng, RngCore, SeedableRng, distr::StandardUniform, rngs::StdRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -207,21 +206,14 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
         let delta = self.delta.expect("base OTs are done");
         let mut sub_conn = self.conn.sub_connection();
 
-        let their_seed_comm: Option<random_oracle::Hash> = if S::MALICIOUS_SECURITY {
-            let (_, mut rx) = sub_conn.stream().await?;
-            Some(rx.next().await.ok_or(Error::UnexcpectedClose)??)
-        } else {
-            None
-        };
-
         // channel for communication between async task and compute thread
         let (ch_s, ch_r) = std::sync::mpsc::channel::<Vec<Block>>();
         let (kos_ch_s, mut kos_ch_r_task) = tokio::sync::mpsc::unbounded_channel::<Block>();
-        let (kos_ch_s_task, kos_ch_r) = std::sync::mpsc::channel::<Block>();
+        let (kos_ch_s_task, kos_ch_r) = std::sync::mpsc::channel::<Vec<Block>>();
         // take these to move them into compute thread, will be returned via ret channel
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let base_choices = mem::take(&mut self.base_choices);
-        let mut batch_sizes_th = batch_sizes.clone();
+        let batch_sizes_th = batch_sizes.clone();
         let owned_ots = mem::take(ots);
         let mut rng = StdRng::from_rng(&mut self.rng);
 
@@ -230,25 +222,45 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
         let jh = spawn_compute(move || {
             let mut ots = owned_ots;
             let mut extra_messages: Vec<[Block; 2]> = Vec::zeroed(num_extra);
-            let mut transposed = allocate_zeroed_vec::<Block>(batch_size);
+            let mut transposed = Vec::zeroed(batch_size);
+            let mut owned_v_mat: Vec<Block> = if S::MALICIOUS_SECURITY {
+                Vec::zeroed(ots.len())
+            } else {
+                vec![]
+            };
+            let mut extra_v_mat = vec![Block::ZERO; num_extra];
 
-            for (ots, batch_sizes) in [
+            for (ots, batch_sizes, extra) in [
                 (
                     &mut ots[..],
-                    &mut batch_sizes_th as &mut dyn Iterator<Item = _>,
+                    &mut batch_sizes_th.clone() as &mut dyn Iterator<Item = _>,
+                    false,
                 ),
-                (&mut extra_messages[..], &mut iter::once(num_extra)),
+                (&mut extra_messages[..], &mut iter::once(num_extra), true),
             ] {
                 // to increase throughput, we divide the `count` many OTs into batches of size
                 // self.batch_size(). Crucially, this allows us to do the transpose
                 // and hash step while not having received the complete data from the
                 // OtExtensionReceiver.
-                for (ot_batch, batch_size) in ots.chunks_mut(batch_size).zip(batch_sizes) {
-                    let cols_byte_batch = batch_size / 8;
-                    // we temporarily use the output OT buffer to hold the current chunk of the V
-                    // matrix which we XOR with our received row or 0 and then
-                    // transpose into `transposed`
-                    let v_mat = bytemuck::cast_slice_mut(&mut ot_batch[..batch_size / 2]);
+                for (chunk_idx, (ot_batch, curr_batch_size)) in
+                    ots.chunks_mut(batch_size).zip(batch_sizes).enumerate()
+                {
+                    let v_mat = if S::MALICIOUS_SECURITY {
+                        if extra {
+                            &mut extra_v_mat
+                        } else {
+                            let offset = chunk_idx * batch_size;
+                            &mut owned_v_mat[offset..offset + curr_batch_size]
+                        }
+                    } else {
+                        // we temporarily use the output OT buffer to hold the current chunk of the
+                        // V matrix which we XOR with our received row or 0
+                        // and then transpose into `transposed`
+                        cast_slice_mut(&mut ot_batch[..curr_batch_size / 2])
+                    };
+                    let v_mat = cast_slice_mut(v_mat);
+
+                    let cols_byte_batch = curr_batch_size / 8;
                     let row_iter = v_mat.chunks_exact_mut(cols_byte_batch);
 
                     for ((v_row, base_rng), base_choice) in
@@ -279,45 +291,79 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
                         *ots = [*v, *v ^ delta]
                     }
 
-                    if !S::MALICIOUS_SECURITY {
-                        FIXED_KEY_HASH.cr_hash_slice_mut(bytemuck::cast_slice_mut(ot_batch));
+                    if S::MALICIOUS_SECURITY {
+                        FIXED_KEY_HASH.tccr_hash_slice_mut(
+                            bytemuck::must_cast_slice_mut(ot_batch),
+                            |i| {
+                                // use batch_size here, which is the batch_size of all batches
+                                // except potentially the last. If we use curr_batch_size, our
+                                // offset would be wrong for the last batch if curr_batch_size <
+                                // batch_size
+                                Block::from(chunk_idx * batch_size + (i / 2))
+                            },
+                        );
+                    } else {
+                        FIXED_KEY_HASH.cr_hash_slice_mut(bytemuck::must_cast_slice_mut(ot_batch));
                     }
                 }
             }
 
             if S::MALICIOUS_SECURITY {
-                let my_seed: Block = rng.random();
-                kos_ch_s.send(my_seed)?;
-                let their_seed = kos_ch_r.recv()?;
-                if commit(their_seed) != their_seed_comm.expect("set at after base ots") {
-                    return Err(Error::WrongCommitment);
+                let seed: Block = rng.random();
+                kos_ch_s.send(seed)?;
+                let rng = AesRng::from_seed(seed);
+
+                let mut q1 = extra_v_mat;
+                let mut q2 = vec![Block::ZERO; BASE_OT_COUNT];
+
+                let owned_v_mat_ref = &owned_v_mat;
+
+                let challenges: Vec<Block> = rng
+                    .sample_iter(StandardUniform)
+                    .take(ots.len() / BASE_OT_COUNT)
+                    .collect();
+
+                let block_batch_size = batch_size / BASE_OT_COUNT;
+
+                let challenge_iter =
+                    batch_sizes_th
+                        .clone()
+                        .enumerate()
+                        .flat_map(|(batch, curr_batch_size)| {
+                            challenges[batch * block_batch_size
+                                ..batch * block_batch_size + curr_batch_size / BASE_OT_COUNT]
+                                .iter()
+                                .cycle()
+                                .take(curr_batch_size)
+                        });
+
+                let q_idx_iter = batch_sizes_th.flat_map(|curr_batch_size| {
+                    (0..BASE_OT_COUNT).flat_map(move |t_idx| {
+                        iter::repeat_n(t_idx, curr_batch_size / BASE_OT_COUNT)
+                    })
+                });
+
+                for ((v, s), q_idx) in owned_v_mat_ref.iter().zip(challenge_iter).zip(q_idx_iter) {
+                    let (qi, qi2) = v.clmul(&s);
+                    q1[q_idx] ^= qi;
+                    q2[q_idx] ^= qi2;
                 }
 
-                let seed = my_seed ^ their_seed;
-                let mut rng = AesRng::from_seed(seed);
-
-                let mut q1 = Block::ZERO;
-                let mut q2 = Block::ZERO;
-                for [msg, _] in ots.iter_mut().chain(extra_messages.iter_mut()) {
-                    let challenge: Block = rng.random();
-                    let (qi1, qi2) = msg.clmul(&challenge);
-                    q1 ^= qi1;
-                    q2 ^= qi2;
+                for (q1i, q2i) in q1.iter_mut().zip(&q2) {
+                    *q1i = Block::gf_reduce(q1i, q2i);
                 }
-
-                FIXED_KEY_HASH
-                    .tccr_hash_slice_mut(cast_slice_mut(&mut ots), |idx| Block::from(idx / 2));
-
-                let q = Block::gf_reduce(&q1, &q2);
-                let received_x = kos_ch_r.recv()?;
-                let received_t = kos_ch_r.recv()?;
-                let tt = received_x.gf_mul(&delta) ^ q;
-                if tt != received_t {
-                    return Err(Error::MaliciousCheck);
+                let mut u = kos_ch_r.recv().unwrap();
+                let received_x = u.pop().unwrap();
+                for ((received_t, base_choice), q1i) in u.iter().zip(&base_choices).zip(&q1) {
+                    let tt =
+                        Block::conditional_select(&Block::ZERO, &received_x, *base_choice) ^ *q1i;
+                    if tt != *received_t {
+                        return Err(Error::MaliciousCheck);
+                    }
                 }
             }
 
-            Ok((ots, base_rngs, base_choices))
+            Ok::<_, Error>((ots, base_rngs, base_choices))
         });
 
         let (_, mut recv) = sub_conn.byte_stream().await?;
@@ -337,25 +383,19 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
         }
 
         if S::MALICIOUS_SECURITY {
-            let (mut kos_send, mut kos_recv) = sub_conn.stream::<Block>().await?;
+            let (mut kos_send, mut kos_recv) = sub_conn.byte_stream().await?;
             let success = 'success: {
                 let Some(blk) = kos_ch_r_task.recv().await else {
                     break 'success false;
                 };
-                kos_send.send(blk).await?;
+                kos_send.as_stream().send(blk).await?;
 
-                let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
-                if kos_ch_s_task.send(blk).is_err() {
-                    break 'success false;
+                {
+                    let mut kos_recv = kos_recv.as_stream();
+                    let u = kos_recv.next().await.unwrap().unwrap();
+                    kos_ch_s_task.send(u).unwrap();
                 }
-                let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
-                if kos_ch_s_task.send(blk).is_err() {
-                    break 'success false;
-                }
-                let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
-                if kos_ch_s_task.send(blk).is_err() {
-                    break 'success false;
-                }
+
                 true
             };
             if !success {
@@ -473,50 +513,63 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
 
         let mut sub_conn = self.conn.sub_connection();
 
-        let my_seed = if S::MALICIOUS_SECURITY {
-            let (mut tx, _) = sub_conn.stream().await?;
-            let seed = self.rng.random();
-            tx.send(commit(seed)).await?;
-            Some(seed)
-        } else {
-            None
-        };
-
         let cols_byte_batch = batch_size / 8;
         let choice_vec = choices_to_u8_vec(choices);
 
         let (ch_s, mut ch_r) = mpsc::unbounded_channel::<Vec<u8>>();
-        let (kos_ch_s, mut kos_ch_r_task) = tokio::sync::mpsc::unbounded_channel::<Block>();
+        let (kos_ch_s, mut kos_ch_r_task) = tokio::sync::mpsc::unbounded_channel::<Vec<Block>>();
         let (kos_ch_s_task, kos_ch_r) = std::sync::mpsc::channel::<Block>();
         let mut rng = StdRng::from_rng(&mut self.rng);
 
         let mut base_rngs = mem::take(&mut self.base_rngs);
         let owned_ots = mem::take(ots);
-        let choices = (S::MALICIOUS_SECURITY).then(|| choices.to_owned());
         let mut jh = spawn_compute(move || {
             let mut ots = owned_ots;
-            let mut t_mat = vec![0; BASE_OT_COUNT * cols_byte_batch];
+            let t_mat_size = if S::MALICIOUS_SECURITY {
+                ots.len()
+            } else {
+                batch_size
+            };
             let num_extra = (S::MALICIOUS_SECURITY as usize) * 128;
+            let mut t_mat = vec![Block::ZERO; t_mat_size];
+            let mut extra_t_mat = vec![Block::ZERO; num_extra];
             let mut extra_messages: Vec<Block> = Vec::zeroed(num_extra);
             let extra_choices = random_choices(num_extra, &mut rng);
             let extra_choice_vec = choices_to_u8_vec(&extra_choices);
 
-            for (ots, choice_vec) in [
-                (&mut ots[..], &choice_vec),
-                (&mut extra_messages[..], &extra_choice_vec),
+            for (ots, choice_vec, extra) in [
+                (&mut ots[..], &choice_vec, false),
+                (&mut extra_messages[..], &extra_choice_vec, true),
             ] {
-                for (output_chunk, choice_batch) in ots
+                for (chunk_idx, (output_chunk, choice_batch)) in ots
                     .chunks_mut(batch_size)
                     .zip(choice_vec.chunks(cols_byte_batch))
+                    .enumerate()
                 {
+                    let curr_batch_size = output_chunk.len();
+                    let chunk_t_mat = if S::MALICIOUS_SECURITY {
+                        if extra {
+                            &mut extra_t_mat
+                        } else {
+                            let offset = chunk_idx * batch_size;
+                            &mut t_mat[offset..offset + curr_batch_size]
+                        }
+                    } else {
+                        &mut t_mat[..curr_batch_size]
+                    };
+                    assert_eq!(output_chunk.len(), chunk_t_mat.len());
+                    assert_eq!(choice_batch.len() * 8, chunk_t_mat.len());
+                    let chunk_t_mat: &mut [u8] = bytemuck::must_cast_slice_mut(chunk_t_mat);
                     // might change for last chunk
                     let cols_byte_batch = choice_batch.len();
-                    for (row, [rng1, rng2]) in
-                        t_mat.chunks_exact_mut(cols_byte_batch).zip(&mut base_rngs)
+                    for (row, [rng1, rng2]) in chunk_t_mat
+                        .chunks_exact_mut(cols_byte_batch)
+                        .zip(&mut base_rngs)
                     {
                         rng1.fill_bytes(row);
                         let mut send_row = vec![0_u8; cols_byte_batch];
                         rng2.fill_bytes(&mut send_row);
+                        // TODO wouldn't this be better on Blocks instead of u8?
                         for ((v2, v1), choices) in send_row.iter_mut().zip(row).zip(choice_batch) {
                             *v2 ^= *v1 ^ *choices;
                         }
@@ -524,11 +577,15 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                     }
                     let output_bytes = bytemuck::cast_slice_mut(output_chunk);
                     transpose_bitmatrix(
-                        &t_mat[..BASE_OT_COUNT * cols_byte_batch],
+                        &chunk_t_mat[..BASE_OT_COUNT * cols_byte_batch],
                         output_bytes,
                         BASE_OT_COUNT,
                     );
-                    if !S::MALICIOUS_SECURITY {
+                    if S::MALICIOUS_SECURITY {
+                        FIXED_KEY_HASH.tccr_hash_slice_mut(output_chunk, |i| {
+                            Block::from(chunk_idx * batch_size + i)
+                        });
+                    } else {
                         FIXED_KEY_HASH.cr_hash_slice_mut(output_chunk);
                     }
                 }
@@ -537,34 +594,68 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
             if S::MALICIOUS_SECURITY {
                 // dropping ch_s is important so the async task exits the ch_r loop
                 drop(ch_s);
-                let my_seed = my_seed.expect("initialized earlier");
-                let their_seed = kos_ch_r.recv()?;
-                kos_ch_s.send(my_seed)?;
+                let seed = kos_ch_r.recv()?;
 
-                let seed = my_seed ^ their_seed;
-                let mut rng = AesRng::from_seed(seed);
+                let mut t1 = extra_t_mat;
+                let mut t2 = vec![Block::ZERO; BASE_OT_COUNT];
 
-                let mut x = Block::ZERO;
-                let mut t1 = Block::ZERO;
-                let mut t2 = Block::ZERO;
-                let zero_one = [Block::ZERO, Block::ONES];
-                for (msg, choice) in ots
-                    .iter_mut()
-                    .zip(&choices.expect("set befor spawn_compute if malicious"))
-                    .chain(extra_messages.iter_mut().zip(&extra_choices))
-                {
-                    let challenge: Block = rng.random();
-                    x ^= challenge & zero_one[choice.unwrap_u8() as usize];
-                    let (ti1, ti2) = msg.clmul(&challenge);
-                    t1 ^= ti1;
-                    t2 ^= ti2;
+                let mut x1 = Block::from_choices(&extra_choices);
+                let mut x2 = Block::ZERO;
+
+                let rng = AesRng::from_seed(seed);
+
+                let t_mat_ref = &t_mat;
+                let batches = count / batch_size;
+                let batch_sizes = iter::repeat(batch_size)
+                    .take(batches)
+                    .chain((batch_size_remainder != 0).then_some(batch_size_remainder));
+
+                let choice_blocks: Vec<_> = choice_vec
+                    .chunks_exact(Block::BYTES)
+                    .map(|chunk| Block::try_from(chunk).expect("chunk is 16 bytes"))
+                    .collect();
+
+                let challenges: Vec<Block> = rng
+                    .sample_iter(StandardUniform)
+                    .take(choice_blocks.len())
+                    .collect();
+
+                for (x, s) in choice_blocks.iter().zip(challenges.iter()) {
+                    let (xi, xi2) = x.clmul(s);
+                    x1 ^= xi;
+                    x2 ^= xi2;
                 }
-                FIXED_KEY_HASH.tccr_hash_slice_mut(&mut ots, Block::from);
 
-                t1 = Block::gf_reduce(&t1, &t2);
+                let block_batch_size = batch_size / BASE_OT_COUNT;
 
-                kos_ch_s.send(x)?;
-                kos_ch_s.send(t1)?;
+                let challenge_iter =
+                    batch_sizes
+                        .clone()
+                        .enumerate()
+                        .flat_map(|(batch, curr_batch_size)| {
+                            challenges[batch * block_batch_size
+                                ..batch * block_batch_size + curr_batch_size / BASE_OT_COUNT]
+                                .iter()
+                                .cycle()
+                                .take(curr_batch_size)
+                        });
+                let t_idx_iter = batch_sizes.flat_map(|curr_batch_size| {
+                    (0..BASE_OT_COUNT).flat_map(move |t_idx| {
+                        iter::repeat_n(t_idx, curr_batch_size / BASE_OT_COUNT)
+                    })
+                });
+
+                for ((t, s), t_idx) in t_mat_ref.iter().zip(challenge_iter).zip(t_idx_iter) {
+                    let (ti, ti2) = t.clmul(&s);
+                    t1[t_idx] ^= ti;
+                    t2[t_idx] ^= ti2;
+                }
+
+                for (t1i, t2i) in t1.iter_mut().zip(&mut t2) {
+                    *t1i = Block::gf_reduce(t1i, t2i);
+                }
+                t1.push(Block::gf_reduce(&x1, &x2));
+                kos_ch_s.send(t1).unwrap();
             }
             Ok::<_, Error>((ots, base_rngs))
         });
@@ -586,26 +677,23 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
             if let Err(err) = err {
                 resume_unwind(err);
             };
-            let (mut kos_send, mut kos_recv) = sub_conn.stream::<Block>().await?;
+            let (mut kos_send, mut kos_recv) = sub_conn.byte_stream().await?;
 
-            let blk = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
+            let seed = {
+                let mut kos_recv = kos_recv.as_stream::<Block>();
+                kos_recv.next().await.ok_or(Error::UnexcpectedClose)??
+            };
 
             let success = 'success: {
-                if kos_ch_s_task.send(blk).is_err() {
+                if kos_ch_s_task.send(seed).is_err() {
                     break 'success false;
                 }
-                let Some(blk) = kos_ch_r_task.recv().await else {
+
+                let mut kos_send = kos_send.as_stream::<Vec<Block>>();
+                let Some(v) = kos_ch_r_task.recv().await else {
                     break 'success false;
                 };
-                kos_send.send(blk).await?;
-                let Some(blk) = kos_ch_r_task.recv().await else {
-                    break 'success false;
-                };
-                kos_send.send(blk).await?;
-                let Some(blk) = kos_ch_r_task.recv().await else {
-                    break 'success false;
-                };
-                kos_send.send(blk).await?;
+                kos_send.send(v).await.map_err(Error::Communication)?;
 
                 true
             };
@@ -655,10 +743,6 @@ impl<S: Security> CotReceiver for OtExtensionReceiver<S> {
             .correlated_receive_into(ots, choices)
             .await
     }
-}
-
-fn commit(b: Block) -> random_oracle::Hash {
-    random_oracle::hash(b.as_bytes())
 }
 
 fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
@@ -752,15 +836,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extension_malicious() {
+    async fn test_extension_malicious_half_batch() {
         let _g = init_tracing();
-        const COUNT: usize = DEFAULT_OT_BATCH_SIZE;
+        const COUNT: usize = DEFAULT_OT_BATCH_SIZE / 2;
         let (c1, c2) = local_conn().await.unwrap();
         let rng1 = StdRng::seed_from_u64(42);
         let mut rng2 = StdRng::seed_from_u64(24);
         let choices = random_choices(COUNT, &mut rng2);
         let mut sender = OtExtensionSender::<MaliciousMarker>::new_with_rng(c1, rng1);
         let mut receiver = OtExtensionReceiver::<MaliciousMarker>::new_with_rng(c2, rng2);
+
+        let (send_ots, recv_ots) =
+            tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
+        for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
+            assert_eq!(r, s[c.unwrap_u8() as usize]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extension_malicious_partial_batch() {
+        let _g = init_tracing();
+        const COUNT: usize = DEFAULT_OT_BATCH_SIZE + DEFAULT_OT_BATCH_SIZE / 2 + 128;
+        let (c1, c2) = local_conn().await.unwrap();
+        let rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(24);
+        let choices = random_choices(COUNT, &mut rng2);
+        let mut sender = OtExtensionSender::<MaliciousMarker>::new_with_rng(c1, rng1);
+        let mut receiver = OtExtensionReceiver::<MaliciousMarker>::new_with_rng(c2, rng2);
+
+        let (send_ots, recv_ots) =
+            tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
+        for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {
+            assert_eq!(r, s[c.unwrap_u8() as usize]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extension_malicious_multiple_batch() {
+        let _g = init_tracing();
+        const COUNT: usize = DEFAULT_OT_BATCH_SIZE * 2;
+        let (c1, c2) = local_conn().await.unwrap();
+        let rng1 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRng::seed_from_u64(24);
+        let choices = random_choices(COUNT, &mut rng2);
+        let mut sender = OtExtensionSender::<MaliciousMarker>::new_with_rng(c1, rng1);
+        let mut receiver = OtExtensionReceiver::<MaliciousMarker>::new_with_rng(c2, rng2);
+
         let (send_ots, recv_ots) =
             tokio::try_join!(sender.send(COUNT), receiver.receive(&choices)).unwrap();
         for ((r, s), c) in recv_ots.into_iter().zip(send_ots).zip(choices) {

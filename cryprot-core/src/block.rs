@@ -11,6 +11,7 @@ use bytemuck::{Pod, Zeroable};
 use rand::{Rng, distr::StandardUniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+use thiserror::Error;
 use wide::u8x16;
 
 use crate::random_oracle::{self, RandomOracle};
@@ -336,6 +337,20 @@ impl From<&u128> for Block {
     }
 }
 
+#[derive(Debug, Error)]
+#[error("slice must have length of 16")]
+pub struct WrongLength;
+
+impl TryFrom<&[u8]> for Block {
+    type Error = WrongLength;
+
+    #[inline]
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        let arr = value.try_into().map_err(|_| WrongLength)?;
+        Ok(Self::new(arr))
+    }
+}
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod from_arch_impls {
     #[cfg(target_arch = "x86")]
@@ -471,5 +486,14 @@ mod tests {
         for rest in iter {
             assert_eq!(false, rest);
         }
+    }
+
+    #[test]
+    fn test_from_choices() {
+        let mut choices = vec![Choice::from(0); 128];
+        choices[2] = Choice::from(1);
+        choices[16] = Choice::from(1);
+        let blk = Block::from_choices(&choices);
+        assert_eq!(Block::from(1_u128 << 2 | 1_u128 << 16), blk);
     }
 }

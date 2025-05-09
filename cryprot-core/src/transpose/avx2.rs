@@ -152,9 +152,12 @@ unsafe fn avx_transpose_block(
 const AVX_BLOCK_SHIFT: usize = 4;
 const AVX_BLOCK_SIZE: usize = 1 << AVX_BLOCK_SHIFT;
 
-// Main entry point for matrix transpose
+/// Transpose 128x128 bit matrix using AVX2.
+/// 
+/// # Safety
+/// AVX2 needs to be enabled.
 #[target_feature(enable = "avx2")]
-pub unsafe fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
+pub fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
     const MAT_SIZE_SHIFT: usize = 7;
     unsafe {
         let in_out = in_out.as_mut_ptr();
@@ -199,6 +202,7 @@ pub unsafe fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) 
     let cols = input.len() * 8 / rows;
     assert_eq!(0, cols % 128);
     assert_eq!(0, rows % 128);
+    #[allow(unused_unsafe)]
     let mut buf = [unsafe { _mm256_setzero_si256() }; 64];
     let in_stride = cols / 8;
     let out_stride = rows / 8;
@@ -221,11 +225,8 @@ pub unsafe fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) 
                     std::ptr::copy_nonoverlapping(src_row, buf_u8_ptr.add(k * 16), 16);
                 }
             }
-            // SAFETY: avx2 is enabled
-            unsafe {
-                // Transpose the 128x128 bit square
-                avx_transpose128x128(&mut buf);
-            }
+            // Transpose the 128x128 bit square
+            avx_transpose128x128(&mut buf);
 
             unsafe {
                 // needs to be recreated because prev &mut borrow invalidates ptr

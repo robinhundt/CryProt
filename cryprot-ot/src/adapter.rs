@@ -1,10 +1,13 @@
 //! Adapters for OT types.
 
+use std::io;
+
 use bitvec::{order::Lsb0, vec::BitVec};
 use cryprot_core::{Block, buf::Buf};
 use cryprot_net::ConnectionError;
 use futures::{SinkExt, StreamExt};
 use subtle::ConditionallySelectable;
+use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
@@ -38,8 +41,20 @@ impl<P: SemiHonest> SemiHonest for ChosenChoice<P> {}
 // TODO is there something I can cite that this holds?
 impl<P: Malicious> Malicious for ChosenChoice<P> {}
 
+#[derive(Error, Debug)]
+pub enum Error<E> {
+    #[error("unable to perform R-OTs")]
+    Rot(E),
+    #[error("error in sending correction values for C-OT")]
+    Correction(io::Error),
+    #[error("expected correction values but receiver is closed")]
+    MissingCorrection,
+    #[error("connection error to peer")]
+    Connecion(#[from] ConnectionError),
+}
+
 impl<R: RandChoiceRotReceiver> RotReceiver for ChosenChoice<R> {
-    type Error = R::Error;
+    type Error = Error<R::Error>;
 
     async fn receive_into(
         &mut self,
@@ -50,30 +65,33 @@ impl<R: RandChoiceRotReceiver> RotReceiver for ChosenChoice<R> {
             .0
             .rand_choice_receive_into(ots)
             .await
-            .map_err(|_| ())
-            .unwrap();
+            .map_err(Error::Rot)?;
         for (c1, c2) in rand_choices.iter_mut().zip(choices) {
             *c1 ^= *c2;
         }
         let mut bv: BitVec<u8, Lsb0> = BitVec::with_capacity(choices.len());
         bv.extend(rand_choices.iter().map(|c| c.unwrap_u8() != 0));
 
-        let (mut tx, _) = self.connection().stream().await.unwrap();
-        tx.send(bv).await.unwrap();
+        let (mut tx, _) = self.connection().stream().await?;
+        tx.send(bv).await.map_err(Error::Correction)?;
         Ok(())
     }
 }
 
 impl<S: RotSender + RandChoiceRotSender + Send> RotSender for ChosenChoice<S> {
-    type Error = S::Error;
+    type Error = Error<S::Error>;
 
     async fn send_into(
         &mut self,
         ots: &mut impl cryprot_core::buf::Buf<[cryprot_core::Block; 2]>,
     ) -> Result<(), Self::Error> {
-        self.0.send_into(ots).await.map_err(|_| ()).unwrap();
-        let (_, mut rx) = self.connection().stream().await.unwrap();
-        let correction: BitVec<u8, Lsb0> = rx.next().await.unwrap().unwrap();
+        self.0.send_into(ots).await.map_err(Error::Rot)?;
+        let (_, mut rx) = self.connection().stream().await?;
+        let correction: BitVec<u8, Lsb0> = rx
+            .next()
+            .await
+            .ok_or(Error::MissingCorrection)?
+            .map_err(Error::Correction)?;
 
         for (ots, c_bit) in ots.iter_mut().zip(correction) {
             let tmp = *ots;

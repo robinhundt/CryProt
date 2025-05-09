@@ -13,6 +13,9 @@ repository.workspace = true
 __testing = ["dep:anyhow", "metrics"]
 metrics = ["dep:tracing-subscriber", "serde/derive"]
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow = { workspace = true, optional = true }
 bincode.workspace = true

@@ -118,7 +118,7 @@ mod clmul {
     #[inline]
     pub unsafe fn clmul128(a: __m128i, b: __m128i) -> (__m128i, __m128i) {
         // This is currently needed because we run the nightly version of
-        // clippy where this is an unused unsafe because the used 
+        // clippy where this is an unused unsafe because the used
         // intrinsincs have been marked safe on nightly but not yet on
         // stable.
         #[allow(unused_unsafe)]

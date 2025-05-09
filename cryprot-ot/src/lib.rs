@@ -1,3 +1,4 @@
+#![warn(clippy::unwrap_used)]
 //! CryProt-OT implements several [oblivious transfer](https://en.wikipedia.org/wiki/Oblivious_transfer) protocols.
 //!
 //! - base OT: "Simplest OT" [[CO15](https://eprint.iacr.org/2015/267)]

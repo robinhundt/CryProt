@@ -362,7 +362,7 @@ impl RegularPprfReceiver {
     ) -> Result<(), Error> {
         let size = self.conf.size();
         let mut output = mem::take(out);
-        let (_, mut rx) = self.conn.stream().await.unwrap();
+        let (_, mut rx) = self.conn.stream().await?;
         let (send, recv) = std::sync::mpsc::channel();
         let jh = spawn_compute(move || {
             if output.len() < size {
@@ -386,7 +386,10 @@ impl RegularPprfReceiver {
                 allocate_zeroed_vec(2_usize.pow(dd as u32));
 
             for g in (0..pnt_count).step_by(PARALLEL_TREES) {
-                let tree_grp: TreeGrp = recv.recv().unwrap();
+                let Ok(tree_grp): Result<TreeGrp, _> = recv.recv() else {
+                    // Async task is dropped, so we simply return the output which will be dropped
+                    return output;
+                };
                 assert_eq!(g, tree_grp.g);
 
                 if depth > 1 {

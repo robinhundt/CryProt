@@ -57,3 +57,6 @@ inherits = "release"
 codegen-units = 1
 inherits = "release"
 lto = "fat"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"

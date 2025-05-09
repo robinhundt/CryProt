@@ -85,7 +85,7 @@ impl AesHash {
         for chunk in x.chunks_mut(AES_PAR_BLOCKS) {
             self.aes
                 .encrypt_blocks_b2b(bytemuck::cast_slice(chunk), &mut tmp[..chunk.len()])
-                .unwrap();
+                .expect("in and out always have same length");
             chunk
                 .iter_mut()
                 .zip(tmp)
@@ -101,7 +101,7 @@ impl AesHash {
         for (chunk_idx, chunk) in x.chunks_mut(AES_PAR_BLOCKS).enumerate() {
             self.aes
                 .encrypt_blocks_b2b(bytemuck::cast_slice(chunk), &mut tmp[..chunk.len()])
-                .unwrap();
+                .expect("in and out always have same length");
             chunk
                 .iter_mut()
                 .zip(&mut tmp)

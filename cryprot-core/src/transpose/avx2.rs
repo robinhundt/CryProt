@@ -153,7 +153,7 @@ const AVX_BLOCK_SHIFT: usize = 4;
 const AVX_BLOCK_SIZE: usize = 1 << AVX_BLOCK_SHIFT;
 
 /// Transpose 128x128 bit matrix using AVX2.
-/// 
+///
 /// # Safety
 /// AVX2 needs to be enabled.
 #[target_feature(enable = "avx2")]

@@ -62,7 +62,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Check Clippy
-        run: cargo clippy --workspace --all-features --examples -- -D warnings
+        run: cargo clippy --workspace --all-features --examples --lib -- -D warnings
 
 
   docs:

@@ -13,6 +13,9 @@ repository.workspace = true
 bench-libote = ["dep:libote-codes"]
 libote-compat = ["dep:libote-codes"]
 
+[lints]
+workspace = true
+
 [lib]
 bench = false
 

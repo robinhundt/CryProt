@@ -94,6 +94,9 @@ pub enum Error {
     #[error("Commitment does not match seed")]
     WrongCommitment,
     /// Only possible for malicious variant.
+    #[error("sender did not receiver x value in KOS check")]
+    MissingXValue,
+    /// Only possible for malicious variant.
     #[error("malicious check failed")]
     MaliciousCheck,
     #[doc(hidden)]
@@ -195,8 +198,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
             "count % batch_size must be multiple of 128"
         );
 
-        let batch_sizes = iter::repeat(batch_size)
-            .take(batches)
+        let batch_sizes = iter::repeat_n(batch_size, batches)
             .chain((batch_size_remainder != 0).then_some(batch_size_remainder));
 
         if !self.has_base_ots() {
@@ -344,7 +346,7 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
                 });
 
                 for ((v, s), q_idx) in owned_v_mat_ref.iter().zip(challenge_iter).zip(q_idx_iter) {
-                    let (qi, qi2) = v.clmul(&s);
+                    let (qi, qi2) = v.clmul(s);
                     q1[q_idx] ^= qi;
                     q2[q_idx] ^= qi2;
                 }
@@ -352,8 +354,10 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
                 for (q1i, q2i) in q1.iter_mut().zip(&q2) {
                     *q1i = Block::gf_reduce(q1i, q2i);
                 }
-                let mut u = kos_ch_r.recv().unwrap();
-                let received_x = u.pop().unwrap();
+                let mut u = kos_ch_r.recv()?;
+                let Some(received_x) = u.pop() else {
+                    return Err(Error::MissingXValue);
+                };
                 for ((received_t, base_choice), q1i) in u.iter().zip(&base_choices).zip(&q1) {
                     let tt =
                         Block::conditional_select(&Block::ZERO, &received_x, *base_choice) ^ *q1i;
@@ -392,8 +396,10 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
 
                 {
                     let mut kos_recv = kos_recv.as_stream();
-                    let u = kos_recv.next().await.unwrap().unwrap();
-                    kos_ch_s_task.send(u).unwrap();
+                    let u = kos_recv.next().await.ok_or(Error::UnexcpectedClose)??;
+                    if kos_ch_s_task.send(u).is_err() {
+                        break 'success false;
+                    }
                 }
 
                 true
@@ -403,7 +409,10 @@ impl<S: Security> RotSender for OtExtensionSender<S> {
             }
         }
 
-        let (owned_ots, base_rngs, base_choices) = jh.await.expect("panic in worker thread")?;
+        let (owned_ots, base_rngs, base_choices) = match jh.await {
+            Ok(res) => res?,
+            Err(panicked) => resume_unwind(panicked),
+        };
         self.base_rngs = base_rngs;
         self.base_choices = base_choices;
         *ots = owned_ots;
@@ -606,8 +615,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
 
                 let t_mat_ref = &t_mat;
                 let batches = count / batch_size;
-                let batch_sizes = iter::repeat(batch_size)
-                    .take(batches)
+                let batch_sizes = iter::repeat_n(batch_size, batches)
                     .chain((batch_size_remainder != 0).then_some(batch_size_remainder));
 
                 let choice_blocks: Vec<_> = choice_vec
@@ -646,7 +654,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                 });
 
                 for ((t, s), t_idx) in t_mat_ref.iter().zip(challenge_iter).zip(t_idx_iter) {
-                    let (ti, ti2) = t.clmul(&s);
+                    let (ti, ti2) = t.clmul(s);
                     t1[t_idx] ^= ti;
                     t2[t_idx] ^= ti2;
                 }
@@ -655,7 +663,7 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                     *t1i = Block::gf_reduce(t1i, t2i);
                 }
                 t1.push(Block::gf_reduce(&x1, &x2));
-                kos_ch_s.send(t1).unwrap();
+                kos_ch_s.send(t1)?;
             }
             Ok::<_, Error>((ots, base_rngs))
         });
@@ -702,7 +710,10 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
             }
         }
 
-        let (owned_ots, base_rngs) = jh.await.expect("panic in worker thread")?;
+        let (owned_ots, base_rngs) = match jh.await {
+            Ok(res) => res?,
+            Err(panicked) => resume_unwind(panicked),
+        };
 
         self.base_rngs = base_rngs;
         *ots = owned_ots;

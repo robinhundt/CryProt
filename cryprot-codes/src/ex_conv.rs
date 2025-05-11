@@ -269,7 +269,7 @@ impl ExConvCode {
         #[cfg(debug_assertions)]
         for (i, bb) in bb.iter().enumerate() {
             let exp = if ((b >> i) & 1) != 0 { xi } else { Block::ZERO };
-            debug_assert_eq!(exp, bytemuck::cast(*bb))
+            debug_assert_eq!(exp, bytemuck::cast(*bb));
         }
 
         seq!(N in 0..8 {

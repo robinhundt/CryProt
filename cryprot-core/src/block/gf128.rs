@@ -121,11 +121,9 @@ mod clmul {
         // clippy where this is an unused unsafe because the used
         // intrinsincs have been marked safe on nightly but not yet on
         // stable.
-        #[allow(unused_unsafe)]
-        unsafe {
-            // NOTE: I tried using karatsuba but it was slightly slower than the naive
-            // multiplication
-            let ab_low = _mm_clmulepi64_si128::<0x00>(a, b);
+        // NOTE: I tried using karatsuba but it was slightly slower than the naive
+        // multiplication
+        let ab_low = _mm_clmulepi64_si128::<0x00>(a, b);
             let ab_high = _mm_clmulepi64_si128::<0x11>(a, b);
             let ab_lohi1 = _mm_clmulepi64_si128::<0x01>(a, b);
             let ab_lohi2 = _mm_clmulepi64_si128::<0x10>(a, b);
@@ -133,7 +131,6 @@ mod clmul {
             let low = _mm_xor_si128(ab_low, _mm_slli_si128::<8>(ab_mid));
             let high = _mm_xor_si128(ab_high, _mm_srli_si128::<8>(ab_mid));
             (low, high)
-        }
     }
 
     #[target_feature(enable = "pclmulqdq")]

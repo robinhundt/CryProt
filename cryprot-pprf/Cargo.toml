@@ -1,3 +1,5 @@
+cargo-features = ["edition2024"]
+
 [package]
 description = "Implementation of a distributed PPRF for Silent OT"
 edition = "2024"

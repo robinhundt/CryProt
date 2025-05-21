@@ -1,3 +1,5 @@
+cargo-features = ["edition2024"]
+
 [package]
 description = "Implementation of a Oblivious Transfer extension protocols."
 edition = "2024"

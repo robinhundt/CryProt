@@ -1,2 +1,5 @@
 [build]
 rustflags = "-C target-cpu=native"
+
+[unstable]
+allow-features = ["edition2024"]

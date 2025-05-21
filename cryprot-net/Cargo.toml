@@ -1,3 +1,5 @@
+cargo-features = ["edition2024"]
+
 [package]
 description = "Networking library for cryptographic protocols built on QUIC."
 edition = "2024"

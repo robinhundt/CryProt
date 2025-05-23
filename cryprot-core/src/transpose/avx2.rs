@@ -9,15 +9,14 @@ unsafe fn _mm256_slli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
         matches!(shift, 2 | 4 | 8 | 16 | 32),
         "Must be called with correct shift"
     );
-    unsafe {
-        match shift {
-            2 => _mm256_slli_epi64::<2>(a),
-            4 => _mm256_slli_epi64::<4>(a),
-            8 => _mm256_slli_epi64::<8>(a),
-            16 => _mm256_slli_epi64::<16>(a),
-            32 => _mm256_slli_epi64::<32>(a),
-            _ => unreachable_unchecked(),
-        }
+    match shift {
+        2 => _mm256_slli_epi64::<2>(a),
+        4 => _mm256_slli_epi64::<4>(a),
+        8 => _mm256_slli_epi64::<8>(a),
+        16 => _mm256_slli_epi64::<16>(a),
+        32 => _mm256_slli_epi64::<32>(a),
+        // SAFETY: Shift is upheld by caller
+        _ => unsafe { unreachable_unchecked() },
     }
 }
 
@@ -29,15 +28,14 @@ unsafe fn _mm256_srli_epi64_var_shift(a: __m256i, shift: usize) -> __m256i {
         matches!(shift, 2 | 4 | 8 | 16 | 32),
         "Must be called with correct shift"
     );
-    unsafe {
-        match shift {
-            2 => _mm256_srli_epi64::<2>(a),
-            4 => _mm256_srli_epi64::<4>(a),
-            8 => _mm256_srli_epi64::<8>(a),
-            16 => _mm256_srli_epi64::<16>(a),
-            32 => _mm256_srli_epi64::<32>(a),
-            _ => unreachable_unchecked(),
-        }
+    match shift {
+        2 => _mm256_srli_epi64::<2>(a),
+        4 => _mm256_srli_epi64::<4>(a),
+        8 => _mm256_srli_epi64::<8>(a),
+        16 => _mm256_srli_epi64::<16>(a),
+        32 => _mm256_srli_epi64::<32>(a),
+        // SAFETY: Shift is upheld by caller
+        _ => unsafe { unreachable_unchecked() },
     }
 }
 
@@ -202,8 +200,7 @@ pub unsafe fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) 
     let cols = input.len() * 8 / rows;
     assert_eq!(0, cols % 128);
     assert_eq!(0, rows % 128);
-    #[allow(unused_unsafe)]
-    let mut buf = [unsafe { _mm256_setzero_si256() }; 64];
+    let mut buf = [_mm256_setzero_si256(); 64];
     let in_stride = cols / 8;
     let out_stride = rows / 8;
 

@@ -1,5 +1,5 @@
 //! Implementation of AVX2 BitMatrix transpose based on libOTe.
-use std::arch::x86_64::*;
+use std::{arch::x86_64::*, cmp};
 
 use bytemuck::{must_cast_slice, must_cast_slice_mut};
 use seq_macro::seq;
@@ -178,7 +178,7 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
 
     // Buffer to hold a single 128x128 bit square (64 __m256i registers = 2048
     // bytes)
-    let mut buf = [_mm256_setzero_si256(); 64];
+    let mut buf = [_mm256_setzero_si256(); 64 * 4];
     let in_stride = cols / 8; // Stride in bytes for input rows
     let out_stride = rows / 8; // Stride in bytes for output rows
 
@@ -190,30 +190,80 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     // Row block index
     for i in 0..r_main {
         // Column block index
-        for j in 0..c_main {
-            // Load 128x128 bit sub-matrix into `buf`
-            let input_block_start_byte_idx = i * 128 * in_stride + j * 16;
+        let mut j = 0;
+        while j < c_main {
+            let input_offset = i * 128 * in_stride + j * 16;
+            let curr_addr = input[input_offset..].as_ptr().addr();
+            let next_cache_line_addr = (curr_addr + 1).next_multiple_of(64); // cache line size
+            let blocks_in_cache_line = (next_cache_line_addr - curr_addr) / 16;
+
+            let remaining_blocks_in_cache_line = if blocks_in_cache_line == 0 {
+                // will cross over a cache line, but if the blocks are not 16-byte aligned, this
+                // is the best we can do
+                4
+            } else {
+                blocks_in_cache_line
+            };
+            // Ensure we don't read OOB of the input
+            let remaining_blocks_in_cache_line =
+                cmp::min(remaining_blocks_in_cache_line, c_main - j);
+
             let buf_as_bytes: &mut [u8] = must_cast_slice_mut(&mut buf);
 
-            for k in 0..128 {
-                let src_slice = &input[input_block_start_byte_idx + k * in_stride
-                    ..input_block_start_byte_idx + k * in_stride + 16];
-                buf_as_bytes[k * 16..(k + 1) * 16].copy_from_slice(src_slice);
+            // The loading loop loads the input data into the buf. By using a macro and
+            // matching on 4 blocks in a cache line (each row in a block is 16 bytes, so the
+            // rows 4 consecutive blocks are 64 bytes long) the optimizer uses a loop
+            // unrolled version for this case.
+            macro_rules! loading_loop {
+                ($remaining_blocks_in_cache_line:expr) => {
+                    for k in 0..128 {
+                        let src_slice = &input[input_offset + k * in_stride
+                            ..input_offset + k * in_stride + 16 * remaining_blocks_in_cache_line];
+
+                        for block in 0..remaining_blocks_in_cache_line {
+                            buf_as_bytes[block * 2048 + k * 16..block * 2048 + (k + 1) * 16]
+                                .copy_from_slice(&src_slice[block * 16..(block + 1) * 16]);
+                        }
+                    }
+                };
             }
 
-            // Transpose the 128x128 bit sub-matrix in `buf`
-            avx_transpose128x128(&mut buf);
-
-            // Copy the transposed data from `buf` to the output slice.
-            let output_block_start_byte_idx = j * 128 * out_stride + i * 16;
-            let buf_as_bytes: &[u8] = must_cast_slice(&buf); // Now read-only
-
-            for k in 0..128 {
-                let src_slice = &buf_as_bytes[k * 16..(k + 1) * 16];
-                let dst_slice = &mut output[output_block_start_byte_idx + k * out_stride
-                    ..output_block_start_byte_idx + k * out_stride + 16];
-                dst_slice.copy_from_slice(src_slice);
+            // This gets optimized to the unrolled loop for the default case of 4 blocks
+            match remaining_blocks_in_cache_line {
+                4 => loading_loop!(4),
+                #[allow(unused_variables)] // false positive
+                other => loading_loop!(other),
             }
+
+            for block in 0..remaining_blocks_in_cache_line {
+                avx_transpose128x128((&mut buf[block * 64..(block + 1) * 64]).try_into().unwrap());
+            }
+
+            let mut output_offset = j * 128 * out_stride + i * 16;
+            let buf_as_bytes: &[u8] = must_cast_slice(&buf);
+
+            if out_stride == 16 {
+                // if the out_stride is 16 bytes, the transposed sub-matrices are in contigous
+                // memory in the output, so we can use a single copy_from_slice. This is
+                // especially helpfule for the case of transposing a 128xl matrix as done in OT
+                // extension.
+                let dst_slice = &mut output
+                    [output_offset..output_offset + 16 * 128 * remaining_blocks_in_cache_line];
+                dst_slice.copy_from_slice(&buf_as_bytes[..remaining_blocks_in_cache_line * 2048]);
+            } else {
+                for block in 0..remaining_blocks_in_cache_line {
+                    for k in 0..128 {
+                        let src_slice =
+                            &buf_as_bytes[block * 2048 + k * 16..block * 2048 + (k + 1) * 16];
+                        let dst_slice = &mut output
+                            [output_offset + k * out_stride..output_offset + k * out_stride + 16];
+                        dst_slice.copy_from_slice(src_slice);
+                    }
+                    output_offset += 128 * out_stride;
+                }
+            }
+
+            j += remaining_blocks_in_cache_line;
         }
     }
 }
@@ -256,6 +306,48 @@ mod tests {
     fn test_avx_transpose() {
         let rows = 128 * 2;
         let cols = 128 * 2;
+        let mut v = vec![0_u8; rows * cols / 8];
+        StdRng::seed_from_u64(42).fill_bytes(&mut v);
+
+        let mut avx_transposed = v.clone();
+        let mut sse_transposed = v.clone();
+        unsafe {
+            transpose_bitmatrix(&v, &mut avx_transposed, rows);
+        }
+        crate::transpose::portable::transpose_bitmatrix(&v, &mut sse_transposed, rows);
+
+        assert_eq!(sse_transposed, avx_transposed);
+    }
+
+    #[test]
+    fn test_avx_transpose_unaligned_data() {
+        let rows = 128 * 2;
+        let cols = 128 * 2;
+        let mut v = vec![0_u8; rows * (cols + 128) / 8];
+        StdRng::seed_from_u64(42).fill_bytes(&mut v);
+
+        let v = {
+            let addr = v.as_ptr().addr();
+            let offset = addr.next_multiple_of(3) - addr;
+            &v[offset..rows * cols / 8]
+        };
+        assert_eq!(0, v.as_ptr().addr() % 3);
+        // allocate out bufs with same dims
+        let mut avx_transposed = v.to_owned();
+        let mut sse_transposed = v.to_owned();
+
+        unsafe {
+            transpose_bitmatrix(&v, &mut avx_transposed, rows);
+        }
+        crate::transpose::portable::transpose_bitmatrix(&v, &mut sse_transposed, rows);
+
+        assert_eq!(sse_transposed, avx_transposed);
+    }
+
+    #[test]
+    fn test_avx_transpose_larger_cols_divisable_by_4_times_128() {
+        let rows = 128;
+        let cols = 128 * 8;
         let mut v = vec![0_u8; rows * cols / 8];
         StdRng::seed_from_u64(42).fill_bytes(&mut v);
 

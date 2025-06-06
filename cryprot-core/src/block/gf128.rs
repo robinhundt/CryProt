@@ -104,11 +104,9 @@ mod clmul {
 
     #[target_feature(enable = "pclmulqdq")]
     #[inline]
-    pub unsafe fn gf128_mul(a: __m128i, b: __m128i) -> __m128i {
-        unsafe {
-            let (low, high) = clmul128(a, b);
-            gf128_reduce(low, high)
-        }
+    pub fn gf128_mul(a: __m128i, b: __m128i) -> __m128i {
+        let (low, high) = clmul128(a, b);
+        gf128_reduce(low, high)
     }
 
     /// Carry-less multiply of two 128-bit numbers.
@@ -116,47 +114,39 @@ mod clmul {
     /// Return (low, high) bits
     #[target_feature(enable = "pclmulqdq")]
     #[inline]
-    pub unsafe fn clmul128(a: __m128i, b: __m128i) -> (__m128i, __m128i) {
-        // This is currently needed because we run the nightly version of
-        // clippy where this is an unused unsafe because the used
-        // intrinsincs have been marked safe on nightly but not yet on
-        // stable.
-        #[allow(unused_unsafe)]
-        unsafe {
-            // NOTE: I tried using karatsuba but it was slightly slower than the naive
-            // multiplication
-            let ab_low = _mm_clmulepi64_si128::<0x00>(a, b);
-            let ab_high = _mm_clmulepi64_si128::<0x11>(a, b);
-            let ab_lohi1 = _mm_clmulepi64_si128::<0x01>(a, b);
-            let ab_lohi2 = _mm_clmulepi64_si128::<0x10>(a, b);
-            let ab_mid = _mm_xor_si128(ab_lohi1, ab_lohi2);
-            let low = _mm_xor_si128(ab_low, _mm_slli_si128::<8>(ab_mid));
-            let high = _mm_xor_si128(ab_high, _mm_srli_si128::<8>(ab_mid));
-            (low, high)
-        }
+    pub fn clmul128(a: __m128i, b: __m128i) -> (__m128i, __m128i) {
+        // NOTE: I tried using karatsuba but it was slightly slower than the naive
+        // multiplication
+        let ab_low = _mm_clmulepi64_si128::<0x00>(a, b);
+        let ab_high = _mm_clmulepi64_si128::<0x11>(a, b);
+        let ab_lohi1 = _mm_clmulepi64_si128::<0x01>(a, b);
+        let ab_lohi2 = _mm_clmulepi64_si128::<0x10>(a, b);
+        let ab_mid = _mm_xor_si128(ab_lohi1, ab_lohi2);
+        let low = _mm_xor_si128(ab_low, _mm_slli_si128::<8>(ab_mid));
+        let high = _mm_xor_si128(ab_high, _mm_srli_si128::<8>(ab_mid));
+        (low, high)
     }
 
     #[target_feature(enable = "pclmulqdq")]
     #[inline]
-    pub unsafe fn gf128_reduce(mut low: __m128i, mut high: __m128i) -> __m128i {
+    pub fn gf128_reduce(mut low: __m128i, mut high: __m128i) -> __m128i {
         // NOTE: I tried a sse shift based reduction but it was slower than the clmul
         // implementation
-        unsafe {
-            let modulus = [MOD, 0];
-            let modulus = _mm_loadu_si64(modulus.as_ptr().cast());
+        let modulus = [MOD, 0];
+        // SAFETY: Ptr to modulus is valid and pclmulqdq implies sse2 is enabled
+        let modulus = unsafe { _mm_loadu_si64(modulus.as_ptr().cast()) };
 
-            let tmp = _mm_clmulepi64_si128::<0x01>(high, modulus);
-            let tmp_shifted = _mm_slli_si128::<8>(tmp);
-            low = _mm_xor_si128(low, tmp_shifted);
-            high = _mm_xor_si128(high, tmp_shifted);
+        let tmp = _mm_clmulepi64_si128::<0x01>(high, modulus);
+        let tmp_shifted = _mm_slli_si128::<8>(tmp);
+        low = _mm_xor_si128(low, tmp_shifted);
+        high = _mm_xor_si128(high, tmp_shifted);
 
-            // reduce overflow
-            let tmp = _mm_clmulepi64_si128::<0x01>(tmp, modulus);
-            low = _mm_xor_si128(low, tmp);
+        // reduce overflow
+        let tmp = _mm_clmulepi64_si128::<0x01>(tmp, modulus);
+        low = _mm_xor_si128(low, tmp);
 
-            let tmp = _mm_clmulepi64_si128::<0x00>(high, modulus);
-            _mm_xor_si128(low, tmp)
-        }
+        let tmp = _mm_clmulepi64_si128::<0x00>(high, modulus);
+        _mm_xor_si128(low, tmp)
     }
 
     #[cfg(all(test, target_feature = "pclmulqdq"))]

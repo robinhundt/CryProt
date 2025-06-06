@@ -469,7 +469,7 @@ impl SendStreamBytes {
         self.inner.close().await.map_err(StreamError::Close)
     }
 
-    pub fn as_stream<T: Serialize>(&mut self) -> SendStreamTemp<T> {
+    pub fn as_stream<T: Serialize>(&mut self) -> SendStreamTemp<'_, T> {
         let framed_send = default_codec().new_write(self);
         SymmetricallyFramed::new(framed_send, Bincode::default())
     }
@@ -517,7 +517,7 @@ fn trace_poll(p: Poll<io::Result<usize>>) -> Poll<io::Result<usize>> {
 }
 
 impl ReceiveStreamBytes {
-    pub fn as_stream<T: DeserializeOwned>(&mut self) -> ReceiveStreamTemp<T> {
+    pub fn as_stream<T: DeserializeOwned>(&mut self) -> ReceiveStreamTemp<'_, T> {
         let framed_read = default_codec().new_read(self);
         SymmetricallyFramed::new(framed_read, Bincode::default())
     }

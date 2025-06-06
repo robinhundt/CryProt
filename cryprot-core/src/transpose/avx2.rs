@@ -115,6 +115,7 @@ pub fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
         // of 256 bit elements. In the first iteration we swap the 2x2 matrices that
         // are at positions in_out[i] and in_out[j], so the offset is 1. For 4x4 matrices
         // the offset is 2
+        #[allow(clippy::eq_op)] // false positive due to use of seq!
         const OFFSET~N: usize = 1 << (N - 1);
 
         for chunk in in_out.chunks_exact_mut(2 * OFFSET~N) {
@@ -282,6 +283,7 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
 // Inline never to reduce code size of main method.
 #[inline(never)]
 #[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
 fn handle_rest_cols(
     input: &[u8],
     output: &mut [u8],
@@ -303,7 +305,7 @@ fn handle_rest_cols(
         // we use 16 because we still transpose a 128x128 matrix, of which only a part
         // is filled
         let buf_offset = k * 16;
-        buf_as_bytes[buf_offset..buf_offset + remaining_cols_bytes].copy_from_slice(&src_slice);
+        buf_as_bytes[buf_offset..buf_offset + remaining_cols_bytes].copy_from_slice(src_slice);
     }
 
     avx_transpose128x128((&mut buf[..64]).try_into().expect("slice has length 64"));

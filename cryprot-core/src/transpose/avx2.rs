@@ -155,28 +155,30 @@ const fn mask(pattern: u64, pattern_len: u32) -> u64 {
     mask
 }
 
-/// Transpose a bit matrix of arbitrary (but constrained) dimensions using AVX2.
+/// Transpose a bit matrix using AVX2.
+///
+/// This implementation is specifically tuned for transposing `128 x l` matrices
+/// as done in OT protocols. Performance might be better if `input` is 16-byte
+/// aligned and the number of columns is divisable by 512 on systems with
+/// 64-byte cache lines.
 ///
 /// # Panics
-/// If the input is not divisible by 128.
-/// If the number of columns (= input.len() * 8 / rows) is less than 128.
 /// If `input.len() != output.len()`
+/// If the number of rows is less than 128.
+/// If the number of rows is not divisable by 128.
+/// If the number of columns (= input.len() * 8 / rows) is not divisable by 8.
 ///
 /// # Safety
 /// AVX2 instruction set must be available.
 #[target_feature(enable = "avx2")]
 pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     assert_eq!(input.len(), output.len());
-    let cols = input.len() * 8 / rows;
-    assert_eq!(
-        0,
-        cols % 128,
-        "Number of columns must be a multiple of 128."
-    );
+    assert!(rows >= 128, "Number of rows must be >= 128.");
     assert_eq!(0, rows % 128, "Number of rows must be a multiple of 128.");
-    assert!(cols >= 128, "Number of columns must be at least 128.");
+    let cols = input.len() * 8 / rows;
+    assert_eq!(0, cols % 8, "Number of columns must be a multiple of 8.");
 
-    // Buffer to hold a single 128x128 bit square (64 __m256i registers = 2048
+    // Buffer to hold a 4 128x128 bit squares (64 * 4 __m256i registers = 2048 * 4
     // bytes)
     let mut buf = [_mm256_setzero_si256(); 64 * 4];
     let in_stride = cols / 8; // Stride in bytes for input rows
@@ -185,6 +187,7 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     // Number of 128x128 bit squares in rows and columns
     let r_main = rows / 128;
     let c_main = cols / 128;
+    let c_rest = cols % 128;
 
     // Iterate through each 128x128 bit square in the matrix
     // Row block index
@@ -236,7 +239,11 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
             }
 
             for block in 0..remaining_blocks_in_cache_line {
-                avx_transpose128x128((&mut buf[block * 64..(block + 1) * 64]).try_into().unwrap());
+                avx_transpose128x128(
+                    (&mut buf[block * 64..(block + 1) * 64])
+                        .try_into()
+                        .expect("slice has length 64"),
+                );
             }
 
             let mut output_offset = j * 128 * out_stride + i * 16;
@@ -265,6 +272,50 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
 
             j += remaining_blocks_in_cache_line;
         }
+
+        if c_rest > 0 {
+            handle_rest_cols(input, output, &mut buf, in_stride, out_stride, c_rest, i, j);
+        }
+    }
+}
+
+// Inline never to reduce code size of main method.
+#[inline(never)]
+#[target_feature(enable = "avx2")]
+fn handle_rest_cols(
+    input: &[u8],
+    output: &mut [u8],
+    buf: &mut [__m256i; 256],
+    in_stride: usize,
+    out_stride: usize,
+    c_rest: usize,
+    i: usize,
+    j: usize,
+) {
+    let input_offset = i * 128 * in_stride + j * 16;
+    let remaining_cols_bytes = c_rest / 8;
+    buf[0..64].fill(_mm256_setzero_si256());
+    let buf_as_bytes: &mut [u8] = must_cast_slice_mut(buf);
+
+    for k in 0..128 {
+        let src_row_offset = input_offset + k * in_stride;
+        let src_slice = &input[src_row_offset..src_row_offset + remaining_cols_bytes];
+        // we use 16 because we still transpose a 128x128 matrix, of which only a part
+        // is filled
+        let buf_offset = k * 16;
+        buf_as_bytes[buf_offset..buf_offset + remaining_cols_bytes].copy_from_slice(&src_slice);
+    }
+
+    avx_transpose128x128((&mut buf[..64]).try_into().expect("slice has length 64"));
+
+    let output_offset = j * 128 * out_stride + i * 16;
+    let buf_as_bytes: &[u8] = must_cast_slice(&*buf);
+
+    for k in 0..c_rest {
+        let src_slice = &buf_as_bytes[k * 16..(k + 1) * 16];
+        let dst_slice =
+            &mut output[output_offset + k * out_stride..output_offset + k * out_stride + 16];
+        dst_slice.copy_from_slice(src_slice);
     }
 }
 
@@ -329,7 +380,7 @@ mod tests {
         let v = {
             let addr = v.as_ptr().addr();
             let offset = addr.next_multiple_of(3) - addr;
-            &v[offset..rows * cols / 8]
+            &v[offset..offset + rows * cols / 8]
         };
         assert_eq!(0, v.as_ptr().addr() % 3);
         // allocate out bufs with same dims
@@ -348,6 +399,23 @@ mod tests {
     fn test_avx_transpose_larger_cols_divisable_by_4_times_128() {
         let rows = 128;
         let cols = 128 * 8;
+        let mut v = vec![0_u8; rows * cols / 8];
+        StdRng::seed_from_u64(42).fill_bytes(&mut v);
+
+        let mut avx_transposed = v.clone();
+        let mut sse_transposed = v.clone();
+        unsafe {
+            transpose_bitmatrix(&v, &mut avx_transposed, rows);
+        }
+        crate::transpose::portable::transpose_bitmatrix(&v, &mut sse_transposed, rows);
+
+        assert_eq!(sse_transposed, avx_transposed);
+    }
+
+    #[test]
+    fn test_avx_transpose_larger_cols_divisable_by_8() {
+        let rows = 128;
+        let cols = 128 + 32;
         let mut v = vec![0_u8; rows * cols / 8];
         StdRng::seed_from_u64(42).fill_bytes(&mut v);
 

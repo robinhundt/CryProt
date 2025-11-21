@@ -738,12 +738,12 @@ mod tests {
 
         let (s_ot, (r_ot, choices)) = tokio::try_join!(
             sender.correlated_send(count, delta),
-            receiver.correlated_receive(count, ChoiceBitPacking::Packed)
+            receiver.correlated_receive(count)
         )
         .unwrap();
 
         assert_eq!(s_ot.len(), count);
 
-        check_correlated(&r_ot, &s_ot, choices.as_deref(), delta);
+        check_correlated(&r_ot, &s_ot, Some(&choices), delta);
     }
 }

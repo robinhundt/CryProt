@@ -394,6 +394,7 @@ impl RegularPprfReceiver {
 
                 if depth > 1 {
                     let lvl1 = get_level(&mut tree, 1);
+                    #[allow(clippy::needless_range_loop)]
                     for i in 0..PARALLEL_TREES {
                         let active = self.base_choices[(i + g, depth - 1)] as usize;
                         lvl1[active ^ 1][i] =

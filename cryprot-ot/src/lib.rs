@@ -2,6 +2,10 @@
 //! CryProt-OT implements several [oblivious transfer](https://en.wikipedia.org/wiki/Oblivious_transfer) protocols.
 //!
 //! - base OT: "Simplest OT" [[CO15](https://eprint.iacr.org/2015/267)]
+//!   (classical security)
+//! - post-quantum base OT: ML-KEM based OT [[MR19](https://eprint.iacr.org/2019/706)]
+//!   (post-quantum security, enable one of the `ml-kem-base-ot-{512,768,1024}`
+//!   features)
 //! - semi-honest OT extension: optimized [[IKNP03](https://www.iacr.org/archive/crypto2003/27290145/27290145.pdf)]
 //!   protocol
 //! - malicious OT extension: optimized [[KOS15](https://eprint.iacr.org/2015/546.pdf)]
@@ -12,6 +16,15 @@
 //!   consistency check)
 //!
 //! This library is heavily inspired by and in parts a port of the C++ [libOTe](https://github.com/osu-crypto/libOTe) library.
+//!
+//! ## ML-KEM Base OT
+//!
+//! Enable one of the `ml-kem-base-ot-{512,768,1024}` features to use
+//! ML-KEM-based OT for the base OT protocol, providing post-quantum security:
+//!
+//! This replaces the classical "Simplest OT" with an ML-KEM-based construction
+//! following FIPS 203 at <https://csrc.nist.gov/pubs/fips/203/final>, similar to libOTe's `ENABLE_MR_KYBER` option.
+//! We use the ML-KEM crate <https://crates.io/crates/ml-kem>.
 //!
 //! ## Benchmarks
 //! We continously run the benchmark suite in CI witht the results publicly
@@ -41,7 +54,7 @@
 //! the future we want to benchmark libOTe on the same hardware for a fair
 //! comparison.
 //!
-//! **Base OT Benchmark:**
+//! **Base OT Benchmark (Simplest OT):**
 //!
 //! | Benchmark      | Mean Time (ms) |
 //! |---------------|---------------|
@@ -55,11 +68,35 @@ use rand::{CryptoRng, Rng, distr, prelude::Distribution, rngs::StdRng};
 use subtle::Choice;
 
 pub mod adapter;
-pub mod base;
 pub mod extension;
+#[cfg(feature = "_ml-kem-base-ot")]
+pub mod mlkem_ot;
 pub mod noisy_vole;
 pub mod phase;
 pub mod silent_ot;
+pub mod simplest_ot;
+
+/// Base OT implementation used by extension protocols.
+///
+/// When one of the `ml-kem-base-ot-{512,768,1024}` features is enabled, uses
+/// [`mlkem_ot::MlKemOt`].
+#[cfg(feature = "_ml-kem-base-ot")]
+pub type BaseOt = mlkem_ot::MlKemOt;
+
+/// Base OT implementation used by extension protocols.
+///
+/// When the `ml-kem-base-ot` feature is not enabled, use
+/// [`simplest_ot::SimplestOt`].
+#[cfg(not(feature = "_ml-kem-base-ot"))]
+pub type BaseOt = simplest_ot::SimplestOt;
+
+/// Error type for base OT operations.
+#[cfg(feature = "_ml-kem-base-ot")]
+pub type BaseOtError = mlkem_ot::Error;
+
+/// Error type for base OT operations.
+#[cfg(not(feature = "_ml-kem-base-ot"))]
+pub type BaseOtError = simplest_ot::Error;
 
 /// Trait for OT receivers/senders which hold a [`Connection`].
 pub trait Connected {

@@ -9,6 +9,10 @@ version = "0.2.1"
 authors.workspace = true
 repository.workspace = true
 
+[features]
+# Use ML-KEM-based OT for base OT.
+ml-kem-base-ot = []
+
 [lints]
 workspace = true
 
@@ -25,7 +29,10 @@ cryprot-net.workspace = true
 cryprot-pprf.workspace = true
 curve25519-dalek = { workspace = true, features = ["rand_core", "serde"] }
 futures.workspace = true
+ml-kem.workspace = true
 rand.workspace = true
+serde_bytes.workspace = true
+serde = { workspace = true, features = ["derive"] }
 subtle.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util"] }

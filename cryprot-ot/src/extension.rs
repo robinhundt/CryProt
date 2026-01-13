@@ -47,7 +47,7 @@ pub const BASE_OT_COUNT: usize = 128;
 pub const DEFAULT_OT_BATCH_SIZE: usize = 2_usize.pow(16);
 
 /// OT extension sender generic over its [`Security`] level.
-pub struct OtExtensionSender<S: Security> {
+pub struct OtExtensionSender<S> {
     rng: StdRng,
     base_ot: SimplestOt,
     conn: Connection,
@@ -59,7 +59,7 @@ pub struct OtExtensionSender<S: Security> {
 }
 
 /// OT extension receiver generic over its [`Security`] level.
-pub struct OtExtensionReceiver<S: Security> {
+pub struct OtExtensionReceiver<S> {
     base_ot: SimplestOt,
     conn: Connection,
     base_rngs: Vec<[AesRng; 2]>,

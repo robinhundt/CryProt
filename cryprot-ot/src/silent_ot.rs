@@ -1,6 +1,6 @@
 //! Semi-honest and malicious Silent OT implementation using expand-convolute code [[RRT23](https://eprint.iacr.org/2023/882)].
 #![allow(non_snake_case)]
-use std::{io, marker::PhantomData, mem};
+use std::{io, mem};
 
 use bytemuck::cast_slice_mut;
 use cryprot_codes::ex_conv::{ExConvCode, ExConvCodeConfig};
@@ -34,9 +34,8 @@ pub type MaliciousSilentOtReceiver = SilentOtReceiver<MaliciousMarker>;
 
 pub struct SilentOtSender<S> {
     conn: Connection,
-    ot_sender: OtExtensionSender<SemiHonestMarker>,
+    ot_sender: OtExtensionSender<S>,
     rng: StdRng,
-    s: PhantomData<S>,
 }
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -73,7 +72,6 @@ impl<S: Security> SilentOtSender<S> {
             conn,
             ot_sender,
             rng: StdRng::from_os_rng(),
-            s: PhantomData,
         }
     }
 
@@ -224,9 +222,8 @@ impl<S: Security> SilentOtSender<S> {
 
 pub struct SilentOtReceiver<S> {
     conn: Connection,
-    ot_receiver: OtExtensionReceiver<SemiHonestMarker>,
+    ot_receiver: OtExtensionReceiver<S>,
     rng: StdRng,
-    s: PhantomData<S>,
 }
 
 impl<S: Security> SilentOtReceiver<S> {
@@ -236,7 +233,6 @@ impl<S: Security> SilentOtReceiver<S> {
             conn,
             ot_receiver,
             rng: StdRng::from_os_rng(),
-            s: PhantomData,
         }
     }
 

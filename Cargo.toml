@@ -21,7 +21,7 @@ bitvec = "1.0.1"
 blake3 = "1.5.5"
 bytemuck = { version = "1.21.0", features = ["must_cast"] }
 cpufeatures = "0.2.17"
-criterion = { version = "0.4", features = ["async_tokio", "html_reports"] }
+criterion = { version = "0.8", features = ["async_tokio", "html_reports"] }
 cryprot-codes = { version = "0.2.0", path = "cryprot-codes" }
 cryprot-core = { version = "0.2.0", path = "cryprot-core" }
 cryprot-net = { version = "0.2.0", path = "cryprot-net" }
@@ -31,7 +31,7 @@ fastdivide = "0.4.2"
 futures = "0.3.30"
 hybrid-array = { version = "0.4.1", features = ["bytemuck"] }
 libc = "0.2.169"
-ndarray = "0.16.1"
+ndarray = "0.17.2"
 num-traits = "0.2.19"
 rand = "0.9.0"
 rand_core = "0.9.0"

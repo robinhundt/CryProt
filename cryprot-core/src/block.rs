@@ -83,13 +83,13 @@ impl Block {
     /// Bytes of the block.
     #[inline]
     pub fn as_bytes(&self) -> &[u8; 16] {
-        self.0.as_array_ref()
+        self.0.as_array()
     }
 
     /// Mutable bytes of the block.
     #[inline]
     pub fn as_mut_bytes(&mut self) -> &mut [u8; 16] {
-        self.0.as_array_mut()
+        self.0.as_mut_array()
     }
 
     /// Hash the block with a [`random_oracle`].

@@ -26,7 +26,7 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
                 // left for i = 0, we write the previous lsb
                 for i in (0..8).rev() {
                     // get msb of each byte
-                    let msbs = v.move_mask().to_le_bytes();
+                    let msbs = v.to_bitmask().to_le_bytes();
                     // write msbs to output at transposed position as one i16
                     let msb_i16 = i16::from_ne_bytes([msbs[0], msbs[1]]);
                     let idx = out(row, col + i, rows) as isize;

@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+env:
+  RUSTFLAGS: "-C target-feature=+pclmulqdq,+avx2,+aes"
+
 jobs:
   # Release unpublished packages.
   release-plz-release:

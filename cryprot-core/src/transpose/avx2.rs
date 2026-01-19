@@ -128,7 +128,7 @@ pub fn avx_transpose128x128(in_out: &mut [__m256i; 64]) {
         }
     });
 
-    // Phase 6: swap 64x64 bit-matrices therfore completing the 128x128 bit
+    // Phase 6: swap 64x64 bit-matrices therefore completing the 128x128 bit
     // transpose
     const SHIFT_6: usize = 6;
     const OFFSET_6: usize = 1 << (SHIFT_6 - 1); // 32
@@ -160,14 +160,15 @@ const fn mask(pattern: u64, pattern_len: u32) -> u64 {
 ///
 /// This implementation is specifically tuned for transposing `128 x l` matrices
 /// as done in OT protocols. Performance might be better if `input` is 16-byte
-/// aligned and the number of columns is divisable by 512 on systems with
+/// aligned and the number of columns is divisible by 512 on systems with
 /// 64-byte cache lines.
 ///
 /// # Panics
 /// If `input.len() != output.len()`
 /// If the number of rows is less than 128.
-/// If the number of rows is not divisable by 128.
-/// If the number of columns (= input.len() * 8 / rows) is not divisable by 8.
+/// If `input.len()` is not divisible by rows.
+/// If the number of rows is not divisible by 128.
+/// If the number of columns (= input.len() * 8 / rows) is not divisible by 8.
 ///
 /// # Safety
 /// AVX2 instruction set must be available.
@@ -175,6 +176,11 @@ const fn mask(pattern: u64, pattern_len: u32) -> u64 {
 pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     assert_eq!(input.len(), output.len());
     assert!(rows >= 128, "Number of rows must be >= 128.");
+    assert_eq!(
+        0,
+        input.len() % rows,
+        "input.len(), must be divisble by rows"
+    );
     assert_eq!(0, rows % 128, "Number of rows must be a multiple of 128.");
     let cols = input.len() * 8 / rows;
     assert_eq!(0, cols % 8, "Number of columns must be a multiple of 8.");
@@ -280,7 +286,15 @@ pub fn transpose_bitmatrix(input: &[u8], output: &mut [u8], rows: usize) {
     }
 }
 
-// Inline never to reduce code size of main method.
+// Inline never to reduce code size of `transpose_bitmatrix` method. This is
+// method is only called once row block if the columns are not divisible by 128.
+// Since this is only rarely executed opposed to the core loop of
+// `transpose_bitmatrix` we annotate it with inline(never) to ensure the
+// optimizer doesn't inline it which could negatively impact performance
+// due to larger code size and potentially more instruction cache misses. This
+// is an assumption and not verified by a benchmark, but even if it were wrong,
+// it shouldn't negatively impact runtime because this method is called rarely
+// in our use cases where we have 128 rows and many columns.
 #[inline(never)]
 #[target_feature(enable = "avx2")]
 #[allow(clippy::too_many_arguments)]
@@ -335,7 +349,7 @@ mod tests {
             let mut v = [_mm256_setzero_si256(); 64];
             StdRng::seed_from_u64(42).fill_bytes(bytemuck::cast_slice_mut(&mut v));
 
-            let orig = v.clone();
+            let orig = v;
             avx_transpose128x128(&mut v);
             avx_transpose128x128(&mut v);
             let mut failed = false;
@@ -398,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn test_avx_transpose_larger_cols_divisable_by_4_times_128() {
+    fn test_avx_transpose_larger_cols_divisible_by_4_times_128() {
         let rows = 128;
         let cols = 128 * 8;
         let mut v = vec![0_u8; rows * cols / 8];
@@ -415,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn test_avx_transpose_larger_cols_divisable_by_8() {
+    fn test_avx_transpose_larger_cols_divisible_by_8() {
         let rows = 128;
         let cols = 128 + 32;
         let mut v = vec![0_u8; rows * cols / 8];

@@ -51,10 +51,7 @@ impl<T> HugePageMemory<T> {
         // new_len <= self.capacity
         // self[len..new_len] is initialized either because of Self::zeroed
         // or with data written to it.
-        #[allow(unused_unsafe)]
-        unsafe {
-            self.len = new_len;
-        }
+        self.len = new_len;
     }
 }
 

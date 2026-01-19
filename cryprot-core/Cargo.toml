@@ -32,6 +32,7 @@ rand.workspace = true
 rand_core.workspace = true
 rand_core_0_6.workspace = true
 rayon = { workspace = true, optional = true }
+seq-macro.workspace = true
 serde = { workspace = true, features = ["derive"] }
 subtle.workspace = true
 thiserror.workspace = true

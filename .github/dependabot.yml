@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+    open-pull-requests-limit: 15
+
+  - package-ecosystem: "github-actions"
+    directories: 
+      - "/"
+      - ".github/actions/setup"
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+    open-pull-requests-limit: 10
+

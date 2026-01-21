@@ -11,4 +11,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- fix silent OT mal OT security
+- fix silent OT malicious security ([#23](https://github.com/robinhundt/CryProt/pull/23))

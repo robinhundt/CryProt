@@ -218,7 +218,7 @@ mod clmul {
         }
     }
 
-    #[cfg(all(test, feature = "nightly", target_feature = "pclmulqdq"))]
+    #[cfg(all(is_nightly, test, target_feature = "pclmulqdq"))]
     mod benches {
         extern crate test;
 
@@ -439,7 +439,7 @@ mod scalar {
         }
     }
 
-    #[cfg(all(test, feature = "nightly"))]
+    #[cfg(all(is_nightly, test))]
     mod benches {
         extern crate test;
 

@@ -29,7 +29,7 @@ jobs:
 
       - name: Install NASM
         if: ${{ matrix.os == 'windows-latest' }}
-        uses: ilammy/setup-nasm@v1
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # 1.5.2
 
       - name: Run tests
         run: cargo test --workspace --verbose --all-features --no-fail-fast

@@ -56,7 +56,7 @@ Our OT implementations should be on par or faster than those in libOTe. In the f
 `unsafe` is used in `cryprot-codes` and `cryprot-core` for performance reasons, most importantly to use SIMD intrinsics. The test suite of those two crates is additionally run using [miri](https://github.com/rust-lang/miri) to check for undefined behavior.
 
 ## Constant time operations
-We try to use constant time operations when operating secret data and make use of [subtle's](https://docs.rs/subtle/latest/subtle/) `Choice` type. However, we may have missed non-constant operations on sensitive data and subtle's `Choice` provides no guarantee for constant-timeness. We provide no guarantee regarding constant-time.
+We try to use constant time operations when operating on secret data and make use of [subtle's](https://docs.rs/subtle/latest/subtle/) `Choice` type. However, we may have missed non-constant operations on sensitive data and subtle's `Choice` provides no guarantee for constant-timeness. We provide no guarantee regarding constant-time.
 
 [`cryprot-core`]: ./cryprot-core
 [`cryprot-net`]: ./cryprot-net

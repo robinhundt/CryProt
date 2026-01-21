@@ -1,0 +1,34 @@
+name: 'CI Setup'
+description: 'Checks out code, installs Rust toolchain, and sets up cache'
+
+inputs:
+  nightly:
+    description: 'Use nightly toolchain'
+    type: boolean
+    default: false
+  components:
+    description: 'Rust components to install'
+    required: false
+    default: ''
+  cache:
+    description: 'Whether to enable rust-cache'
+    type: boolean
+    default: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      id: toolchain
+      with:
+        toolchain: ${{ inputs.nightly == 'true' && 'nightly-2026-01-20' || 'stable' }}
+        components: ${{ inputs.components }}
+
+    - name: Check version
+      shell: bash
+      run: cargo --version
+
+    - name: Cache
+      if: ${{ inputs.cache == 'true' }}
+      uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # 2.8.2

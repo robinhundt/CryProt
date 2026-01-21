@@ -18,14 +18,15 @@ jobs:
       contents: write
     steps:
       - &checkout
-        name: Checkout repository
-        uses: actions/checkout@v6
+        name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # 6.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - &install-rust
-        name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
       - &get-release-app-token
         # Generating a GitHub token, so that PRs and tags created by
         # the release-plz-action can trigger actions workflows.
@@ -56,7 +57,10 @@ jobs:
       cancel-in-progress: false
     steps:
       - *checkout
-      - *install-rust
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
       - *get-release-app-token
       - name: Run release-plz
         uses: release-plz/action@487eb7b5c085a664d5c5ca05f4159bd9b591182a # 0.5.120

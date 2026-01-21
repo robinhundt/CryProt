@@ -16,52 +16,70 @@ jobs:
       matrix:
         os: [ "ubuntu-latest", "windows-latest", "macos-latest" ]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - &checkout
+        name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # 6.0.1
         with:
           submodules: recursive
-      - name: Install nightly
-        uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: nightly-2025-11-21
-          components: "rustfmt, miri"
-      - name: Override default toolchain
-        run: rustup override set ${{steps.toolchain.outputs.name}}
-      - run: cargo --version
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
       - name: Install NASM
         if: ${{ matrix.os == 'windows-latest' }}
         uses: ilammy/setup-nasm@v1
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
+
       - name: Run tests
         run: cargo test --workspace --verbose --all-features --no-fail-fast
+
+  miri:
+    name: Miri
+    runs-on: "ubuntu-latest"
+    steps:
+      - &checkout
+        name: Check out repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # 6.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          nightly: true
+          components: "miri"
+
       - name: Run miri test
         env:
           RUSTFLAGS: "-C target-cpu=native"
           MIRIFLAGS: "-Zmiri-disable-isolation"
         run: cargo miri t -p cryprot-codes -p cryprot-core 
+
   lint:
     name: Lint
     runs-on: "ubuntu-latest"
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - *checkout
+
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          submodules: recursive
-      - name: Install nightly
-        uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: nightly-2025-11-21
-          components: "clippy, rustfmt"
-      - name: Override default toolchain
-        run: rustup override set ${{steps.toolchain.outputs.name}}
-      - run: cargo --version
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
+          nightly: true
+          components: "rustfmt"
+
       - name: Check formatting
         run: cargo fmt --all --check
+
+      # use stable toolchain for clippy to avoid CI failures due to unfinished lints
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        with:
+          toolchain: "stable"
+          components: "clippy"
+
       - name: Check Clippy
         run: cargo clippy --workspace --all-features --examples --lib -- -D warnings
 
@@ -73,20 +91,13 @@ jobs:
       # deny rustdoc warnings
       RUSTDOCFLAGS: -D warnings
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - *checkout
+
+      - name: Setup
+        uses: ./.github/actions/setup
         with:
-          submodules: recursive
-      - name: Install nightly
-        uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: nightly-2025-11-21
-          components: rust-docs
-      - name: Override default toolchain
-        run: rustup override set ${{steps.toolchain.outputs.name}}
-      - run: cargo --version
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
+          nightly: true
+          components: "rust-docs"
+
       - name: Check docs
         run: cargo doc --workspace --verbose --all-features --no-deps -Zunstable-options -Zrustdoc-scrape-examples

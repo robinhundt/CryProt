@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "nightly", feature(test))]
+#![cfg_attr(is_nightly, feature(test))]
 //! Core utilites for cryptographic protocols.
 //!
 //! This crate implements several core utilities for cryptographic protocols.

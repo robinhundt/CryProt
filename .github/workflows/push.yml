@@ -11,18 +11,14 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # 6.0.1
         with:
           submodules: recursive
-      - name: Install nightly
-        uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: nightly-2025-11-21
-      - name: Override default toolchain
-        run: rustup override set ${{steps.toolchain.outputs.name}}
-      - run: cargo --version
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
       - name: Test
         run: cargo test --workspace --verbose --all-features --no-fail-fast

@@ -23,24 +23,30 @@ jobs:
     runs-on: "ubicloud-standard-4"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # 6.0.1
         with:
           submodules: recursive
           ref: ${{ github.event.inputs.ref }}
-      - name: Install nightly
-        uses: dtolnay/rust-toolchain@master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         id: toolchain
         with:
           toolchain: stable
-      - name: Override default toolchain
-        run: rustup override set ${{steps.toolchain.outputs.name}}
+
       - run: cargo --version
+
       - name: Install bencher
-        uses: bencherdev/bencher@main
+        uses: bencherdev/bencher@8151077aa7b1bceaac11c4b308265417cae60e2b # 0.5.10
+
       - name: CPU information
         run: lscpu
+
       - name: Cache
-        uses: ubicloud/rust-cache@v2
+        uses: ubicloud/rust-cache@65b3ff06b9bcc69d88c25e212f1ae3d14a0953c3
+
       - name: Run benchmarks
         run: |
           bencher run \

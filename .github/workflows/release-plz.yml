@@ -13,6 +13,7 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'robinhundt' }}
     permissions:
       contents: write
     steps:
@@ -25,18 +26,28 @@ jobs:
       - &install-rust
         name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - &get-release-app-token
+        # Generating a GitHub token, so that PRs and tags created by
+        # the release-plz-action can trigger actions workflows.
+        name: Generate GitHub token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # 2.2.1
+        id: generate-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PRIVATE_KEY }}
       - name: Run release-plz
-        uses: release-plz/action@487eb7b5c085a664d5c5ca05f4159bd9b591182a
+        uses: release-plz/action@487eb7b5c085a664d5c5ca05f4159bd9b591182a # 0.5.120
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'robinhundt' }}
     permissions:
       contents: write
       pull-requests: write
@@ -46,10 +57,10 @@ jobs:
     steps:
       - *checkout
       - *install-rust
+      - *get-release-app-token
       - name: Run release-plz
-        uses: release-plz/action@487eb7b5c085a664d5c5ca05f4159bd9b591182a
+        uses: release-plz/action@487eb7b5c085a664d5c5ca05f4159bd9b591182a # 0.5.120
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}

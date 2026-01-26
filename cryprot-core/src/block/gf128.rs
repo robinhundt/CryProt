@@ -222,9 +222,8 @@ mod clmul {
     mod benches {
         extern crate test;
 
-        use std::mem::transmute;
+        use std::{hint::black_box, mem::transmute};
 
-        use criterion::black_box;
         use rand::{Rng, rng};
         use test::Bencher;
 

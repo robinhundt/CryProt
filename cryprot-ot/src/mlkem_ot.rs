@@ -1,19 +1,19 @@
 //! Post-quantum base OT using ML-KEM.
 
-// ML-KEM variant: change to MlKem512/MlKem512Params or MlKem768/MlKem768Params for different security levels.
-use ml_kem::{MlKem1024 as MlKem, MlKem1024Params as MlKemParams};
-
 use std::io;
 
 use cryprot_core::{Block, buf::Buf, rand_compat::RngCompat, random_oracle::RandomOracle};
 use cryprot_net::{Connection, ConnectionError};
 use futures::{SinkExt, StreamExt};
+// ML-KEM variant: change to MlKem512/MlKem512Params or MlKem768/MlKem768Params
+// for different security levels.
 use ml_kem::{
-    Ciphertext as MlKemCiphertext, EncodedSizeUser, KemCore, SharedKey,
+    Ciphertext as MlKemCiphertext, EncodedSizeUser, KemCore, MlKem1024 as MlKem,
+    MlKem1024Params as MlKemParams, SharedKey,
     array::typenum::Unsigned,
     kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey as MlKemEncapsulationKey},
 };
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, rngs::StdRng};
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
@@ -92,7 +92,7 @@ impl SemiHonest for MlKemOt {}
 
 impl MlKemOt {
     pub fn new(connection: Connection) -> Self {
-        Self::new_with_rng(connection, StdRng::from_os_rng())
+        Self::new_with_rng(connection, rand::make_rng())
     }
 
     pub fn new_with_rng(connection: Connection, rng: StdRng) -> MlKemOt {
@@ -249,7 +249,8 @@ fn encapsulate(ek: &EncapKeyBytes, rng: &mut StdRng) -> (CtBytes, SharedKey<MlKe
     )
 }
 
-// Derive an OT key from the ML-KEM shared key using a random oracle XOF, extracting a Block-sized (128-bit) output.
+// Derive an OT key from the ML-KEM shared key using a random oracle XOF,
+// extracting a Block-sized (128-bit) output.
 fn hash(key: &SharedKey<MlKem>, tweak: usize) -> Block {
     let mut ro = RandomOracle::new();
     ro.update(HASH_DOMAIN_SEPARATOR);

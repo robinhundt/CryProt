@@ -1,4 +1,13 @@
-//! Simplest-OT base OT protocol by [[CO15](https://eprint.iacr.org/2015/267)] (malicious security).
+//! Simplest-OT base OT protocol by [[CO15]] (malicious security).
+//!
+//! This module implements the Simplest OT protocol described in [[CO15]]
+//! with a slight variation that ensures the sender and receiver's OTs are
+//! uniformly distributed.
+//!
+//! This protocol provides "uniform message security" as defined by [[MR19]]
+//!
+//! [CO15]: https://eprint.iacr.org/2015/267
+//! [MR19]: https://eprint.iacr.org/2019/706.pdf
 
 use std::io;
 
@@ -17,6 +26,7 @@ use tracing::Level;
 
 use crate::{Connected, Malicious, RotReceiver, RotSender, SemiHonest, phase};
 
+/// Sender and Receiver for the base OT protocol.
 pub struct SimplestOt {
     rng: StdRng,
     conn: Connection,
@@ -69,6 +79,16 @@ impl RotSender for SimplestOt {
         let count = ots.len();
         let a = Scalar::random(&mut RngCompat(&mut self.rng));
         let mut A = RISTRETTO_BASEPOINT_TABLE * &a;
+        // The usual CO15 protocol only provides receiver chosen message security.
+        // To ensure the OTs are uniformly distributed, the sender samples a random seed
+        // s and sends a commitment of that seed to the receiver alongside A.
+        // Only after receiving `b` from the receiver, does the sender send the
+        // decommitment. The random seed is then part of the final hashing to
+        // generate the OTs. As the receiver doesn't know the seed before
+        // sending `b`, they can't choose `b` in a way that would influence the
+        // distribution of OTs. The seed commitment and decommitment along with
+        // the random `b` value essentially implements a cointoss protocol.
+        // For more information refer to the MR19 paper.
         let seed: Block = self.rng.random();
         // commit to the seed
         let seed_commitment = seed.ro_hash();

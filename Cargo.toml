@@ -14,7 +14,7 @@ homepage = "https://github.com/robinhundt/CryProt"
 repository = "https://github.com/robinhundt/CryProt"
 
 [workspace.dependencies]
-aes = "=0.9.0-rc.2"
+aes = "=0.9.0-rc.4"
 anyhow = "1.0.86"
 bincode = "1.3.3"
 bitvec = "1.0.1"

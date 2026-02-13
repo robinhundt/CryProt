@@ -11,7 +11,7 @@ The `cryprot` crates implement several **cryp**tographic **prot**ocols and utili
 | [`cryprot-net`] | Networking abstractions built atop [s2n-quic](https://docs.rs/s2n-quic/latest/s2n_quic/). | [![crates.io](https://img.shields.io/crates/v/cryprot-net)](https://crates.io/crates/cryprot-net) | [![docs.rs](https://img.shields.io/docsrs/cryprot-net)](https://docs.rs/cryprot-net) |
 | [`cryprot-pprf`] | Distributed PPRF implementation used in Silent OT [[BCG+19]](https://eprint.iacr.org/2019/1159), based on [libOTe](https://github.com/osu-crypto/libOTe). | [![crates.io](https://img.shields.io/crates/v/cryprot-pprf)](https://crates.io/crates/cryprot-pprf) | [![docs.rs](https://img.shields.io/docsrs/cryprot-pprf)](https://docs.rs/cryprot-pprf) |
 | [`cryprot-codes`] | Expand-convolute linear code [[RRT23]](https://eprint.iacr.org/2023/882), based on [libOTe](https://github.com/osu-crypto/libOTe), used in Silent OT. | [![crates.io](https://img.shields.io/crates/v/cryprot-codes)](https://crates.io/crates/cryprot-codes) | [![docs.rs](https://img.shields.io/docsrs/cryprot-codes)](https://docs.rs/cryprot-codes) |
-| [`cryprot-ot`] | Oblivious transfer implementations:<br>• Base OT: "Simplest OT" [[CO15]](https://eprint.iacr.org/2015/267)<br>• OT extensions: [[IKNP03]](https://www.iacr.org/archive/crypto2003/27290145/27290145.pdf)<br>• Malicious OT extension: [[KOS15]](https://eprint.iacr.org/2015/546.pdf)<br>• Silent OT extension: [[BCG+19]](https://eprint.iacr.org/2019/1159) Silent OT using [[RRT23]](https://eprint.iacr.org/2023/882) code and optional [[YWL+20]](https://dl.acm.org/doi/pdf/10.1145/3372297.3417276) consistency check for malicious security. | [![crates.io](https://img.shields.io/crates/v/cryprot-ot)](https://crates.io/crates/cryprot-ot) | [![docs.rs](https://img.shields.io/docsrs/cryprot-ot)](https://docs.rs/cryprot-ot) |
+| [`cryprot-ot`] | Oblivious transfer implementations:<br>• Base OT: "Simplest OT" [[CO15]](https://eprint.iacr.org/2015/267)<br>• Base OT (post-quantum, optional): [ML-KEM](https://crates.io/crates/ml-kem) based OT [[FIPS 203]](https://csrc.nist.gov/pubs/fips/203/final)<br>• OT extensions: [[IKNP03]](https://www.iacr.org/archive/crypto2003/27290145/27290145.pdf)<br>• Malicious OT extension: [[KOS15]](https://eprint.iacr.org/2015/546.pdf)<br>• Silent OT extension: [[BCG+19]](https://eprint.iacr.org/2019/1159) Silent OT using [[RRT23]](https://eprint.iacr.org/2023/882) code and optional [[YWL+20]](https://dl.acm.org/doi/pdf/10.1145/3372297.3417276) consistency check for malicious security. | [![crates.io](https://img.shields.io/crates/v/cryprot-ot)](https://crates.io/crates/cryprot-ot) | [![docs.rs](https://img.shields.io/docsrs/cryprot-ot)](https://docs.rs/cryprot-ot) |
 
 Documentation for the latest main branch state is available [here](https://robinhundt.github.io/CryProt/cryprot_ot/).
 ## Platform Support
@@ -45,7 +45,7 @@ Silent OT will perform faster for smaller numbers of OTs at slightly increased c
 
 Our OT implementations should be on par or faster than those in libOTe. In the future we want to benchmark libOTe on the same hardware for a fair comparison.
 
-**Base OT Benchmark:**
+**Base OT Benchmark (Simplest OT):**
 
 | Benchmark      | Mean Time (ms) |
 |---------------|---------------|

@@ -32,7 +32,7 @@ jobs:
         uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # 1.5.2
 
       - name: Run tests
-        run: cargo test --workspace --verbose --all-features --no-fail-fast
+        run: cargo test --workspace --verbose --all-features --no-fail-fast ${{ runner.os == 'macOS' && '-- --test-threads=1' || '' }}
 
   miri:
     name: Miri

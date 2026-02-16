@@ -20,5 +20,8 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      - name: Show CPU info
+        run: lscpu
+
       - name: Test
         run: cargo test --workspace --verbose --all-features --no-fail-fast

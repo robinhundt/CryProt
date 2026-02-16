@@ -224,7 +224,7 @@ mod clmul {
 
         use std::{hint::black_box, mem::transmute};
 
-        use rand::{Rng, rng};
+        use rand::{RngExt, rng};
         use test::Bencher;
 
         #[bench]
@@ -443,7 +443,7 @@ mod scalar {
         extern crate test;
 
         use criterion::black_box;
-        use rand::{Rng, rng};
+        use rand::{RngExt, rng};
         use test::Bencher;
 
         #[bench]
@@ -466,7 +466,7 @@ mod scalar {
 mod scalar_simd_tests {
     use std::mem::transmute;
 
-    use rand::{Rng, rng};
+    use rand::{RngExt, rng};
 
     use super::{clmul, scalar};
 

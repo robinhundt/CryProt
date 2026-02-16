@@ -23,6 +23,10 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           persist-credentials: false
+      
+      - name: Show CPU info
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: lscpu
 
       - name: Setup
         uses: ./.github/actions/setup

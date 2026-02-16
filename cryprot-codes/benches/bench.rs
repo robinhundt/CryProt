@@ -2,7 +2,7 @@ use bytemuck::cast_slice_mut;
 use criterion::{Criterion, criterion_group, criterion_main};
 use cryprot_codes::ex_conv::ExConvCode;
 use cryprot_core::{Block, buf::Buf};
-use rand::{RngCore, rng};
+use rand::{Rng, rng};
 
 fn criterion_benchmark(c: &mut Criterion) {
     {

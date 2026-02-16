@@ -15,8 +15,11 @@ use aes::{
     Aes128,
     cipher::{BlockCipherEncrypt, KeyInit},
 };
-use rand::{CryptoRng, Rng, RngCore, SeedableRng};
-use rand_core::block::{BlockRng, BlockRngCore, CryptoBlockRng};
+use rand::{RngExt, SeedableRng};
+use rand_core::{
+    TryCryptoRng, TryRng,
+    block::{BlockRng, Generator},
+};
 
 use crate::{AES_PAR_BLOCKS, Block};
 
@@ -28,23 +31,25 @@ use crate::{AES_PAR_BLOCKS, Block};
 #[derive(Clone, Debug)]
 pub struct AesRng(BlockRng<AesRngCore>);
 
-impl RngCore for AesRng {
+impl TryRng for AesRng {
+    type Error = core::convert::Infallible;
+
     #[inline]
-    fn next_u32(&mut self) -> u32 {
-        self.0.next_u32()
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.0.next_word())
     }
 
     #[inline]
-    fn next_u64(&mut self) -> u64 {
-        self.0.next_u64()
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        Ok(self.0.next_u64_from_u32())
     }
 
     #[inline]
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Self::Error> {
         let block_size = mem::size_of::<aes::Block>();
         let block_len = dest.len() / block_size * block_size;
         let (block_bytes, rest_bytes) = dest.split_at_mut(block_len);
-        // fast path so we don't unnecessarily copy u32 from BlockRngCore::generate into
+        // fast path so we don't unnecessarily copy u32 from Generator::generate into
         // dest
         let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(block_bytes);
         for chunk in blocks.chunks_mut(AES_PAR_BLOCKS) {
@@ -55,7 +60,8 @@ impl RngCore for AesRng {
             self.0.core.aes.encrypt_blocks(chunk);
         }
         // handle the tail
-        self.0.fill_bytes(rest_bytes)
+        self.0.fill_bytes(rest_bytes);
+        Ok(())
     }
 }
 
@@ -64,11 +70,11 @@ impl SeedableRng for AesRng {
 
     #[inline]
     fn from_seed(seed: Self::Seed) -> Self {
-        AesRng(BlockRng::<AesRngCore>::from_seed(seed))
+        AesRng(BlockRng::new(AesRngCore::from_seed(seed)))
     }
 }
 
-impl CryptoRng for AesRng {}
+impl TryCryptoRng for AesRng {}
 
 impl AesRng {
     /// Create a new random number generator using a random seed from
@@ -107,15 +113,14 @@ impl std::fmt::Debug for AesRngCore {
     }
 }
 
-impl BlockRngCore for AesRngCore {
-    type Item = u32;
-    // This is equivalent to `[Block; 9]`
-    type Results = hidden::ParBlockWrapper;
+impl Generator for AesRngCore {
+    // This is equivalent to `[aes::Block; AES_PAR_BLOCKS]`
+    type Output = [u32; AES_PAR_BLOCKS * (mem::size_of::<aes::Block>() / mem::size_of::<u32>())];
 
-    // Compute `E(state)` nine times, where `state` is a counter.
+    // Compute `E(state)` AES_PAR_BLOCKS times, where `state` is a counter.
     #[inline]
-    fn generate(&mut self, results: &mut Self::Results) {
-        let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(results.as_mut());
+    fn generate(&mut self, results: &mut Self::Output) {
+        let blocks = bytemuck::cast_slice_mut::<_, aes::Block>(results);
         blocks.iter_mut().for_each(|blk| {
             // aes::Block is a type alias to Array, but type aliases can't be used as
             // constructors
@@ -123,32 +128,6 @@ impl BlockRngCore for AesRngCore {
             self.state += 1;
         });
         self.aes.encrypt_blocks(blocks);
-    }
-}
-
-mod hidden {
-    /// Equivalent to [aes::Block; 9] (which is the parralel block size for the
-    /// aes-ni backend). Since size 36 arrays don't impl Default we write a
-    /// wrapper.
-    #[derive(Copy, Clone)]
-    pub struct ParBlockWrapper([u32; 36]);
-
-    impl Default for ParBlockWrapper {
-        fn default() -> Self {
-            Self([0; 36])
-        }
-    }
-
-    impl AsMut<[u32]> for ParBlockWrapper {
-        fn as_mut(&mut self) -> &mut [u32] {
-            &mut self.0
-        }
-    }
-
-    impl AsRef<[u32]> for ParBlockWrapper {
-        fn as_ref(&self) -> &[u32] {
-            &self.0
-        }
     }
 }
 
@@ -164,8 +143,6 @@ impl SeedableRng for AesRngCore {
         }
     }
 }
-
-impl CryptoBlockRng for AesRngCore {}
 
 impl From<AesRngCore> for AesRng {
     #[inline]

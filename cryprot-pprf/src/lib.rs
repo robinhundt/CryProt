@@ -18,7 +18,7 @@ use cryprot_core::{
 use cryprot_net::{Connection, ConnectionError};
 use futures::{SinkExt, StreamExt};
 use ndarray::{Array2, ArrayView2};
-use rand::{CryptoRng, Rng, RngCore, SeedableRng, distr::Uniform, prelude::Distribution};
+use rand::{CryptoRng, Rng, RngExt, SeedableRng, distr::Uniform, prelude::Distribution};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::unbounded_channel;
 use tracing::Level;
@@ -120,7 +120,7 @@ impl PprfConfig {
     /// Base OT choice bits needed for this PPRF expansion.
     ///
     /// Every `u8` element is either `0` or `1`.
-    pub fn sample_choice_bits<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Vec<u8> {
+    pub fn sample_choice_bits<R: Rng + CryptoRng>(&self, rng: &mut R) -> Vec<u8> {
         let mut choices = vec![0_u8; self.pnt_count() * self.depth()];
         let dist = Uniform::new(0, self.domain()).expect("correct range");
         for choice in choices.chunks_exact_mut(self.depth()) {
@@ -619,7 +619,7 @@ fn create_fixed_aes() -> [Aes128; 2] {
 /// Intended for testing. Generates suitable OTs and choice bits for a pprf
 /// evaluation.
 #[doc(hidden)]
-pub fn fake_base<R: RngCore + CryptoRng>(
+pub fn fake_base<R: Rng + CryptoRng>(
     conf: PprfConfig,
     rng: &mut R,
 ) -> (Vec<[Block; 2]>, Vec<Block>, Vec<u8>) {
@@ -638,7 +638,7 @@ pub fn fake_base<R: RngCore + CryptoRng>(
 mod tests {
     use cryprot_core::{Block, alloc::HugePageMemory, buf::Buf, utils::xor_inplace};
     use cryprot_net::testing::local_conn;
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     use crate::{
         OutFormat, PARALLEL_TREES, PprfConfig, RegularPprfReceiver, RegularPprfSender, fake_base,

@@ -6,7 +6,7 @@ use cryprot_core::{
     buf::Buf,
     transpose::{avx2, portable},
 };
-use rand::{RngCore, rng};
+use rand::{Rng, rng};
 
 fn criterion_benchmark(c: &mut Criterion) {
     let rows = 128;

@@ -7,7 +7,7 @@ use bitvec::{order::Lsb0, vec::BitVec};
 use bytemuck::{cast_slice, cast_slice_mut};
 use cryprot_core::{Block, aes_rng::AesRng, buf::Buf, tokio_rayon::spawn_compute};
 use cryprot_net::{Connection, ConnectionError};
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::Level;
@@ -128,7 +128,7 @@ mod tests {
     use bitvec::{order::Lsb0, slice::BitSlice};
     use cryprot_core::{Block, utils::xor_inplace};
     use cryprot_net::testing::{init_tracing, local_conn};
-    use rand::{Rng, SeedableRng, rngs::StdRng};
+    use rand::{RngExt, SeedableRng, rngs::StdRng};
 
     use crate::noisy_vole::{NoisyVoleReceiver, NoisyVoleSender};
 

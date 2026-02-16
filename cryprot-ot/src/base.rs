@@ -20,7 +20,7 @@ use cryprot_core::{
 use cryprot_net::{Connection, ConnectionError};
 use curve25519_dalek::{RistrettoPoint, Scalar, constants::RISTRETTO_BASEPOINT_TABLE};
 use futures::{SinkExt, StreamExt};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, rngs::StdRng};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 
@@ -34,7 +34,7 @@ pub struct SimplestOt {
 
 impl SimplestOt {
     pub fn new(connection: Connection) -> Self {
-        Self::new_with_rng(connection, StdRng::from_os_rng())
+        Self::new_with_rng(connection, rand::make_rng())
     }
 
     pub fn new_with_rng(connection: Connection, rng: StdRng) -> SimplestOt {

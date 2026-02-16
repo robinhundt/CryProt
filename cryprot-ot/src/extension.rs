@@ -26,7 +26,7 @@ use cryprot_core::{
 };
 use cryprot_net::{Connection, ConnectionError};
 use futures::{FutureExt, SinkExt, StreamExt, future::poll_fn};
-use rand::{Rng, RngCore, SeedableRng, distr::StandardUniform, rngs::StdRng};
+use rand::{Rng, RngExt, SeedableRng, distr::StandardUniform, rngs::StdRng};
 use subtle::{Choice, ConditionallySelectable};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -107,7 +107,7 @@ pub enum Error {
 impl<S: Security> OtExtensionSender<S> {
     /// Create a new sender for the given [`Connection`].
     pub fn new(conn: Connection) -> Self {
-        Self::new_with_rng(conn, StdRng::from_os_rng())
+        Self::new_with_rng(conn, rand::make_rng())
     }
 
     /// Create a new sender for the given [`Connection`] and [`StdRng`].
@@ -428,7 +428,7 @@ impl Malicious for OtExtensionReceiver<MaliciousMarker> {}
 impl<S: Security> OtExtensionReceiver<S> {
     /// Create a new sender for the given [`Connection`].
     pub fn new(conn: Connection) -> Self {
-        Self::new_with_rng(conn, StdRng::from_os_rng())
+        Self::new_with_rng(conn, rand::make_rng())
     }
 
     /// Create a new sender for the given [`Connection`] and [`StdRng`].

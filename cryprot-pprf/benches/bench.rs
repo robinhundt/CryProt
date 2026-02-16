@@ -11,7 +11,7 @@ use cryprot_net::testing::{init_bench_tracing, local_conn};
 use cryprot_pprf::{
     OutFormat, PARALLEL_TREES, PprfConfig, RegularPprfReceiver, RegularPprfSender, fake_base,
 };
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use tokio::runtime::{self, Runtime};
 
 fn create_mt_runtime(threads: usize) -> Runtime {

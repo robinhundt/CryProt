@@ -11,7 +11,7 @@ use cryprot_core::{
 use cryprot_net::{Connection, ConnectionError};
 use cryprot_pprf::{PprfConfig, RegularPprfReceiver, RegularPprfSender};
 use futures::{SinkExt, StreamExt};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, rngs::StdRng};
 use subtle::Choice;
 use tracing::Level;
 
@@ -71,7 +71,7 @@ impl<S: Security> SilentOtSender<S> {
         Self {
             conn,
             ot_sender,
-            rng: StdRng::from_os_rng(),
+            rng: rand::make_rng(),
         }
     }
 
@@ -232,7 +232,7 @@ impl<S: Security> SilentOtReceiver<S> {
         Self {
             conn,
             ot_receiver,
-            rng: StdRng::from_os_rng(),
+            rng: rand::make_rng(),
         }
     }
 

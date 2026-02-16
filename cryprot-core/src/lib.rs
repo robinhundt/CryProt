@@ -29,7 +29,7 @@ pub use block::Block;
 /// Do not depend on the value of the constant.
 // https://github.com/RustCrypto/block-ciphers/blob/4da9b802de52a3326fdc74d559caddd57042fed2/aes/src/ni.rs#L43
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-pub const AES_PAR_BLOCKS: usize = 9;
+pub const AES_PAR_BLOCKS: usize = 8;
 #[cfg(target_arch = "aarch64")]
 // https://github.com/RustCrypto/block-ciphers/blob/4da9b802de52a3326fdc74d559caddd57042fed2/aes/src/armv8.rs#L32
 pub const AES_PAR_BLOCKS: usize = 21;

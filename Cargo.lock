@@ -968,9 +968,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hex-literal"
-version = "0.4.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
 
 [[package]]
 name = "hybrid-array"
@@ -1011,9 +1011,9 @@ dependencies = [
 
 [[package]]
 name = "intrusive-collections"
-version = "0.9.7"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "189d0897e4cbe8c75efedf3502c18c887b05046e59d28404d4d8e46cbc4d1e86"
+checksum = "ec0375b6b871e424e9e052e1107d57dc6952f77ff882bd4bf74333a833779bab"
 dependencies = [
  "memoffset",
 ]
@@ -1677,9 +1677,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-codec"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06e83949244460eccb3230472342d2da6d2a4770d7d1fe7122cf157ef759b581"
+checksum = "37a07f4fac48aa62fe8e70ee05eb8671d143689cbb950ad6cca2e7e52313a093"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1688,9 +1688,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic"
-version = "1.72.0"
+version = "1.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f499f9417a0b30063a1d8be623d22041b7bc4ae2290ea9d8cff93a46e87e95d"
+checksum = "ab472129b56875c4e42e055903ce95523291a142223b331d1544e3dd9a702293"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -1712,9 +1712,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-core"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e386cd0b9b6a85205ab5f92f1d643bbae9d2937a9ebb0cfe4181a2201e4bf50"
+checksum = "4f526ee912db4354dffc6229d283ac9d7cf297ec1bee8e495b786a7e520138b2"
 dependencies = [
  "atomic-waker",
  "byteorder",
@@ -1733,9 +1733,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-crypto"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "710bc3a9e226a2aa5229b5221135c3ac04061f9c523a3b79ea9d6710cbd4f6d6"
+checksum = "aec6bbed663012d824ee279833959800837453a32d118d351d971da2ffc0f363"
 dependencies = [
  "aws-lc-rs",
  "cfg-if",
@@ -1747,9 +1747,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-platform"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "272a3bc4f55d5d50f1ca91e935f5560d36dc1ac47cdc1c222f5e90b15448f6c1"
+checksum = "7229151d4a48d17cec48d274c0c74c82220ddef932aae91fdc18d9beab7097bc"
 dependencies = [
  "cfg-if",
  "futures",
@@ -1762,9 +1762,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-rustls"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ce2a92639edc4acd39ddb392c241a01f72096948f7ed489fcec566afd58f04c"
+checksum = "3fff17e3c7bbde694b1cadacfb42aae93d43d57dbc77b726bdbd67518e51b2dd"
 dependencies = [
  "bytes",
  "rustls",
@@ -1776,9 +1776,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-tls"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aff4c47d133e0ff0a72e8b96480856cc12e0ae95360115b809a45af2a501e21c"
+checksum = "64c35e1159a13fd9602905ea0e0c4c0a7d023d62680b8ea1ff73f9c1de1070f6"
 dependencies = [
  "bytes",
  "errno",
@@ -1791,9 +1791,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-tls-default"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f36bd6cb7b834f1f7c99b58553d8ef49297cad90eb83bde237947e4d4cb50d2"
+checksum = "c14d35fee2f8997241176e7a191d11cd928e0ff6638bd6aafddf4f3d8d24ff6c"
 dependencies = [
  "s2n-quic-rustls",
  "s2n-quic-tls",
@@ -1801,9 +1801,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-transport"
-version = "0.72.0"
+version = "0.74.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8354cf03407c802640c72535226e1273694f8882293ab58965605b0e9bd5e0da"
+checksum = "5627b2561dba83b25908d49afa87ff27afd6f04a4cb3679731349db71967dc16"
 dependencies = [
  "bytes",
  "futures-channel",

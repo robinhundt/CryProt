@@ -37,7 +37,7 @@ rand = "0.10.0"
 rand_core = "0.10.0"
 rand_core_0_6 = { package = "rand_core", version = "0.6" }
 rayon = "1.10.0"
-s2n-quic = "1.37.0"
+s2n-quic = "1.74.0"
 seq-macro = "=0.3.6"
 serde = "1.0.203"
 subtle = "2.6.1"

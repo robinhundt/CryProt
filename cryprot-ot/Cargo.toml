@@ -4,7 +4,7 @@ edition = "2024"
 keywords = ["iknp", "kos", "oblivious-transfer", "silent-ot", "simplest-ot"]
 license = "MIT"
 name = "cryprot-ot"
-version = "0.2.1"
+version = "0.2.2"
 
 authors.workspace = true
 repository.workspace = true

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/robinhundt/CryProt/compare/cryprot-pprf-v0.2.1...cryprot-pprf-v0.2.2) - 2026-02-27
+
+### Other
+
+- *(rand)* update rand and rand_core to 0.10
+
 ## [0.2.1](https://github.com/robinhundt/CryProt/compare/cryprot-pprf-v0.2.0...cryprot-pprf-v0.2.1) - 2026-01-21
 
 ### Other

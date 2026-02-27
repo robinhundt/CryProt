@@ -28,7 +28,7 @@ cryprot-net = { version = "0.2.1", path = "cryprot-net" }
 cryprot-pprf = { version = "0.2.1", path = "cryprot-pprf" }
 curve25519-dalek = "4.1.3"
 fastdivide = "0.4.2"
-futures = "0.3.30"
+futures = "0.3.32"
 hybrid-array = { version = "0.4.7", features = ["bytemuck"] }
 libc = "0.2.181"
 ndarray = "0.17.2"

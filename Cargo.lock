@@ -1670,9 +1670,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-codec"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37a07f4fac48aa62fe8e70ee05eb8671d143689cbb950ad6cca2e7e52313a093"
+checksum = "4f50a47bba1ff6cd526c0018481a13289307aade3fe4798ecb45306e67e726b5"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1681,17 +1681,16 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic"
-version = "1.74.0"
+version = "1.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab472129b56875c4e42e055903ce95523291a142223b331d1544e3dd9a702293"
+checksum = "cac8d7c1941118cb9922b0ba8720793d5df6fbcaf5f989c523b0d7ca9cd14326"
 dependencies = [
  "bytes",
  "cfg-if",
  "cuckoofilter",
  "futures",
  "hash_hasher",
- "rand 0.9.2",
- "rand_chacha 0.9.0",
+ "rand 0.10.0",
  "s2n-codec",
  "s2n-quic-core",
  "s2n-quic-crypto",
@@ -1705,9 +1704,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-core"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f526ee912db4354dffc6229d283ac9d7cf297ec1bee8e495b786a7e520138b2"
+checksum = "f1c1acca904f1681a854c0db3969407f3b335dcceeed1c2291c860f198f77283"
 dependencies = [
  "atomic-waker",
  "byteorder",
@@ -1726,9 +1725,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-crypto"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aec6bbed663012d824ee279833959800837453a32d118d351d971da2ffc0f363"
+checksum = "cc143a289765b48bfe7f2986497ed445b4f98ab45e8d787e24054a84b78109ff"
 dependencies = [
  "aws-lc-rs",
  "cfg-if",
@@ -1740,9 +1739,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-platform"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7229151d4a48d17cec48d274c0c74c82220ddef932aae91fdc18d9beab7097bc"
+checksum = "8ca931fd1c528f4eaaf8af8b75ef66ff8d8540d719d00fd03ebb9cb1e546cf62"
 dependencies = [
  "cfg-if",
  "futures",
@@ -1755,9 +1754,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-rustls"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fff17e3c7bbde694b1cadacfb42aae93d43d57dbc77b726bdbd67518e51b2dd"
+checksum = "b791196ac1a1363e920f160a27155c5ea1c9b979366d549619fdb57dba775b2c"
 dependencies = [
  "bytes",
  "rustls",
@@ -1769,9 +1768,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-tls"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64c35e1159a13fd9602905ea0e0c4c0a7d023d62680b8ea1ff73f9c1de1070f6"
+checksum = "2ec2f00ccffd7340aee61089f10858537b0644c0b98370f5e4d2317106480e40"
 dependencies = [
  "bytes",
  "errno",
@@ -1784,9 +1783,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-tls-default"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c14d35fee2f8997241176e7a191d11cd928e0ff6638bd6aafddf4f3d8d24ff6c"
+checksum = "55d96c3d5a3bcc9a5e962fec8c4f2bf480c0254a9ba96dad95c6ee7d2a849f6f"
 dependencies = [
  "s2n-quic-rustls",
  "s2n-quic-tls",
@@ -1794,9 +1793,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-transport"
-version = "0.74.0"
+version = "0.76.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5627b2561dba83b25908d49afa87ff27afd6f04a4cb3679731349db71967dc16"
+checksum = "8dcf1512601877051e089976f59e074ec5d2ff38a1ab01cdc219e00afe821c4b"
 dependencies = [
  "bytes",
  "futures-channel",

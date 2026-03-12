@@ -35,10 +35,8 @@ use tokio::{
 use tracing::Level;
 
 use crate::{
-    Connected, CotReceiver, CotSender, Malicious, MaliciousMarker, RotReceiver, RotSender,
-    Security, SemiHonest, SemiHonestMarker,
-    adapter::CorrelatedFromRandom,
-    base::{self, SimplestOt},
+    BaseOt, BaseOtError, Connected, CotReceiver, CotSender, Malicious, MaliciousMarker,
+    RotReceiver, RotSender, Security, SemiHonest, SemiHonestMarker, adapter::CorrelatedFromRandom,
     phase, random_choices,
 };
 
@@ -49,7 +47,7 @@ pub const DEFAULT_OT_BATCH_SIZE: usize = 2_usize.pow(16);
 /// OT extension sender generic over its [`Security`] level.
 pub struct OtExtensionSender<S> {
     rng: StdRng,
-    base_ot: SimplestOt,
+    base_ot: BaseOt,
     conn: Connection,
     base_rngs: Vec<AesRng>,
     base_choices: Vec<Choice>,
@@ -60,7 +58,7 @@ pub struct OtExtensionSender<S> {
 
 /// OT extension receiver generic over its [`Security`] level.
 pub struct OtExtensionReceiver<S> {
-    base_ot: SimplestOt,
+    base_ot: BaseOt,
     conn: Connection,
     base_rngs: Vec<[AesRng; 2]>,
     batch_size: usize,
@@ -83,7 +81,7 @@ pub type MaliciousOtExtensionReceiver = OtExtensionReceiver<MaliciousMarker>;
 #[non_exhaustive]
 pub enum Error {
     #[error("unable to compute base OTs")]
-    BaseOT(#[from] base::Error),
+    BaseOT(#[from] BaseOtError),
     #[error("connection error to peer")]
     Connection(#[from] ConnectionError),
     #[error("error in sending/receiving data")]
@@ -114,7 +112,7 @@ impl<S: Security> OtExtensionSender<S> {
     ///
     /// For an rng seeded with a fixed seed, the output is deterministic.
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
-        let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
+        let base_ot = BaseOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
         Self {
             rng,
             base_ot,
@@ -435,7 +433,7 @@ impl<S: Security> OtExtensionReceiver<S> {
     ///
     /// For an rng seeded with a fixed seed, the output is deterministic.
     pub fn new_with_rng(mut conn: Connection, mut rng: StdRng) -> Self {
-        let base_ot = SimplestOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
+        let base_ot = BaseOt::new_with_rng(conn.sub_connection(), StdRng::from_rng(&mut rng));
         Self {
             rng,
             base_ot,

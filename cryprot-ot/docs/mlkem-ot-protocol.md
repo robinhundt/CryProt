@@ -95,6 +95,10 @@ This is identical to `H` except the seed is random rather than derived from a ha
 
 ## Protocol
 
+**Convention:** All arithmetic (`+`, `-`) in the protocol steps operates on the `t_hat`
+component only. The `rho` component is always the same across all keys in a single OT
+(taken from the real key generated in step 1) and is carried along unchanged.
+
 ### Receiver (choice bit `b`)
 
 1. **Generate real keypair:**
@@ -111,8 +115,7 @@ This is identical to `H` except the seed is random rather than derived from a ha
 
 3. **Compute the correlated key for position `b`:**
    ```
-   r_b.t_hat = ek.t_hat - H(r_{1-b}).t_hat
-   r_b.rho   = ek.rho
+   r_b = ek - H(r_{1-b})
    ```
 
 4. **Send to sender:**
@@ -123,56 +126,80 @@ This is identical to `H` except the seed is random rather than derived from a ha
 
 ### Sender
 
-1. **Receive `(r_0, r_1)` from the receiver.**
+5. **Receive `(r_0, r_1)` from the receiver**
 
-2. **For each `j in {0, 1}`, reconstruct the encapsulation key:**
+6. **For each `j in {0, 1}`, reconstruct the encapsulation key:**
    ```
-   pk_j.t_hat = r_j.t_hat + H(r_{1-j}).t_hat
-   pk_j.rho   = rho                                // same rho from both r_0 and r_1
-   ```
-
-3. **Encapsulate to both reconstructed keys:**
-   ```
-   (ct_0, k_0) = ML-KEM.Encaps(pk_0)
-   (ct_1, k_1) = ML-KEM.Encaps(pk_1)
+   ek_j = r_j + H(r_{1-j})
    ```
 
-4. **Derive OT keys:**
+7. **Encapsulate to both reconstructed keys:**
    ```
-   key_j = RO(domain_sep || k_j || j)
+   (ct_0, ss_0) = ML-KEM.Encaps(ek_0)
+   (ct_1, ss_1) = ML-KEM.Encaps(ek_1)
    ```
+   Each `ss_j` is a 32-byte ML-KEM shared secret. Each `ct_j` is an ML-KEM ciphertext.
 
-5. **Send to receiver:**
+8. **Derive OT output keys** 
+
+   Hashing each shared secret down to a 128-bit `Block`:
+   ```
+   key_j = RO(domain_sep || ss_j || i)
+   ```
+   `RO` is a random oracle (instantiated as a hash function), `domain_sep` is a fixed
+   byte string for domain separation, and `i` is a tweak (the OT batch index) ensuring
+   that different OTs in a batch produce independent keys.
+
+   The sender stores `ots[i] = [key_0, key_1]` — both OT output keys.
+
+9. **Send to receiver:**
    ```
    Sender -> Receiver: (ct_0, ct_1)
    ```
 
 ### Receiver (continued)
 
-6. **Decapsulate the chosen ciphertext:**
-   ```
-   k_b = ML-KEM.Decaps(dk, ct_b)
-   ```
+10. **Decapsulate the chosen ciphertext:**
+    ```
+    ss_b = ML-KEM.Decaps(dk, ct_b)
+    ```
 
-7. **Derive OT key:**
-   ```
-   key_b = RO(domain_sep || k_b || b)
-   ```
+11. **Derive OT key:**
+    ```
+    key_b = RO(domain_sep || ss_b || i)
+    ```
+    The receiver stores `ots[i] = key_b` — one OT output key for OT `i` batch in the batch.
 
 ## Why This Works
 
-**Correctness:** For the chosen side `b`, the sender reconstructs:
-```
-pk_b.t_hat = r_b.t_hat + H(r_{1-b}).t_hat
-           = (ek.t_hat - H(r_{1-b}).t_hat) + H(r_{1-b}).t_hat
-           = ek.t_hat
-```
-So `pk_b = ek`, the real public key. `ML-KEM.Decaps(dk, ct_b)` recovers the same shared key `k_b` that the sender computed via `ML-KEM.Encaps(pk_b)`.
+**Correctness:**
 
-**Security:** For the other side `1-b`, the sender reconstructs:
+For the chosen side `b`, the sender reconstructs in step 6:
 ```
-pk_{1-b}.t_hat = r_{1-b}.t_hat + H(r_b).t_hat
+ek_b = r_b + H(r_{1-b})
+     = (ek - H(r_{1-b})) + H(r_{1-b})
+     = ek
 ```
-The receiver does not have the secret key for `pk_{1-b}`, so they cannot decapsulate `ct_{1-b}`.
+So `ek_b = ek`, the real public key. In step 10, the receiver calls `ML-KEM.Decaps(dk, ct_b)` and recovers the same shared secret `ss_b` that the sender computed via `ML-KEM.Encaps(ek_b)` in step 7.
 
-The choice bit `b` is hidden because `r_b.t_hat = ek.t_hat - H(r_{1-b}).t_hat`. Since `ek.t_hat` is indistinguishable from uniform under MLWE, `r_b` looks like a random key regardless of `b`. Both `r_0` and `r_1` appear uniform to the sender.
+**Security:**
+
+For the other side `1-b`, the sender reconstructs in step 6:
+```
+ek_{1-b} = r_{1-b} + H(r_b)
+```
+
+Expanding `r_b` (from step 3):
+```
+ek_{1-b} = r_{1-b} + H(ek - H(r_{1-b}))
+```
+
+This does NOT simplify — `H` is a hash function, so `H(ek - H(r_{1-b}))` does not
+cancel with `H(r_{1-b})`. The result `ek_{1-b}` is an unrelated key for which the
+receiver does not have a decapsulation key `dk`, so they cannot decapsulate `ct_{1-b}`.
+
+The choice bit `b` is hidden because `r_b = ek - H(r_{1-b})`. Since `ek` is
+indistinguishable from uniform under MLWE, and `H(r_{1-b})` is determined by the
+already-public `r_{1-b}`, subtracting it from a uniform value still yields a uniform
+value. So both `r_0` and `r_1` appear uniform to the sender — neither reveals which
+is the real key.

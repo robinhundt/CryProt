@@ -1,10 +1,10 @@
 # ML-KEM OT Protocol
 
-Based on MR19 (Masny-Rindal, ePrint 2019/706), Figure 8, instantiated with ML-KEM per Section D.3.
+Based on MR19 (Masny-Rindal, ePrint 2019/706), Figure 8, instantiated with ML-KEM instead of Crystals-Kyber, as per Section D.3.
 
-Reference implementation: [libOTe KyberOT]([](https://github.com/osu-crypto/libOTe/blob/d0e499206d1d4d16c6b4ca6c0e712490e0632f80/thirdparty/KyberOT/KyberOT.c#L40-L41)).
+Reference implementation: [libOTe KyberOT](https://github.com/osu-crypto/libOTe/blob/d0e499206d1d4d16c6b4ca6c0e712490e0632f80/thirdparty/KyberOT/KyberOT.c#L40-L41).
 
-ML-KEM implementation: [ML-KEM]([](https://github.com/RustCrypto/KEMs/blob/5a7f3ab7af5420cacca9befc9212532e4c7f6ca1/ml-kem/src/)).
+ML-KEM implementation: [ML-KEM](https://github.com/RustCrypto/KEMs/blob/5a7f3ab7af5420cacca9befc9212532e4c7f6ca1/ml-kem/src/).
 
 ## Notation
 
@@ -30,7 +30,7 @@ where:
 - `t_hat` is an `NttVector<k>`: the public key vector in NTT domain (`t_hat = A_hat * s + e` in NTT form)
 - `rho` is a 32-byte seed used to derive the public matrix `A_hat`
 
-Note that the ML-KEM encapsulation key is the same as the K-PKE encryption key in our simplified outline above.
+Note that the ML-KEM encapsulation key is the same as the K-PKE encryption key (FIPS 203, Section 5).
 
 The serialized form is:
 
@@ -65,16 +65,14 @@ for j in 0..k:
 ```
 
 Each call uses different index bytes `(j, 0)` in FIPS 203 Algorithm 7 for domain separation.
-In libOTe, this corresponds to `randomPK`, where it instead generates `A_hat` and takes a single
-row or column from it.
+In libOTe, this corresponds to `randomPK`, where it instead generates `A_hat` and takes the first row from it.
 
 Output: `(t_hat, rho)`. The `rho` is passed through unchanged.
 
 **`H(ek) -> (h, ek.rho)`**
 
 Hash-to-key (corresponds to libOTe's `pkHash`). Maps an encapsulation key to another
-encapsulation key. Takes an element of `T_q^k`, hashes it
-to a 32-byte seed, and uses that seed to sample a new element of `T_q^k`.
+encapsulation key. Takes an element of `T_q^k`, hashes it to a 32-byte seed, and uses that seed to sample a new element of `T_q^k`.
 
 Given an encapsulation key `ek = (t_hat, rho)`:
 
@@ -85,7 +83,7 @@ h    = SampleNTTVector(seed, ek.rho)         // sample a new NttVector<k> from t
 
 Output: `(h, ek.rho)` where `h` is an `NttVector<k>` in `T_q^k`.
 
-**`RandomEK(seed, rho) -> (r_hat, rho)`**
+**`RandomEK(seed, rho) -> (t_hat, rho)`**
 
 Generate a random encapsulation key from the given random 32 byte `seed` and `rho`:
 
@@ -140,7 +138,7 @@ component only. The `rho` component is always the same across all keys in a sing
    ```
    Each `ss_j` is a 32-byte ML-KEM shared secret. Each `ct_j` is an ML-KEM ciphertext.
 
-8. **Derive OT output keys** 
+8. **Derive OT output keys**
 
    Hashing each shared secret down to a 128-bit `Block`:
    ```
@@ -168,7 +166,7 @@ component only. The `rho` component is always the same across all keys in a sing
     ```
     key_b = RO(domain_sep || ss_b || i)
     ```
-    The receiver stores `ots[i] = key_b` — one OT output key for OT `i` batch in the batch.
+    The receiver stores `ots[i] = key_b` — one OT output key for the `i`-th OT in the batch.
 
 ## Why This Works
 
@@ -199,7 +197,7 @@ cancel with `H(r_{1-b})`. The result `ek_{1-b}` is an unrelated key for which th
 receiver does not have a decapsulation key `dk`, so they cannot decapsulate `ct_{1-b}`.
 
 The choice bit `b` is hidden because `r_b = ek - H(r_{1-b})`. Since `ek` is
-indistinguishable from uniform under MLWE, and `H(r_{1-b})` is determined by the
+indistinguishable from uniform under the MLWE assumption, and `H(r_{1-b})` is determined by the
 already-public `r_{1-b}`, subtracting it from a uniform value still yields a uniform
 value. So both `r_0` and `r_1` appear uniform to the sender — neither reveals which
 is the real key.

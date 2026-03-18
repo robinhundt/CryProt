@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/robinhundt/CryProt/compare/cryprot-core-v0.3.1...cryprot-core-v0.3.2) - 2026-03-18
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.3.1](https://github.com/robinhundt/CryProt/compare/cryprot-core-v0.3.0...cryprot-core-v0.3.1) - 2026-03-05
 
 ### Added

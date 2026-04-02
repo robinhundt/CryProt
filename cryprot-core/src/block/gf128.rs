@@ -466,15 +466,28 @@ mod scalar {
 mod scalar_simd_tests {
     use std::mem::transmute;
 
-    use rand::{RngExt, rng};
+    use proptest::prelude::*;
 
     use super::{clmul, scalar};
 
-    #[test]
-    fn test_clmul128() {
-        for _ in 0..1000 {
-            let (a, b) = rng().random::<(u128, u128)>();
-            unsafe {
+    // https://github.com/proptest-rs/proptest/issues/82
+    // really sad that this is not standard behavior
+    fn u128_with_edges() -> impl Strategy<Value = u128> {
+        prop_oneof![
+            // weight -> strategy
+            1 => Just(0u128),
+            1 => Just(1u128),
+            1 => Just(u128::MAX),
+            1 => Just(u128::MAX - 1),
+            6 => any::<u128>(),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        #[should_panic]
+        fn test_clmul128(a in u128_with_edges(), b in u128_with_edges()) {
+             unsafe {
                 let clmul_res = clmul::clmul128(transmute(a), transmute(b));
                 let scalar_res = scalar::clmul128(a, b);
                 assert_eq!(scalar_res.0, transmute(clmul_res.0));
@@ -482,11 +495,10 @@ mod scalar_simd_tests {
         }
     }
 
-    #[test]
-    fn test_gf128_reduce() {
-        for _ in 0..1000 {
-            let (a, b) = rng().random::<(u128, u128)>();
-            unsafe {
+    proptest! {
+        #[test]
+        fn test_gf128_reduce(a in u128_with_edges(), b in u128_with_edges()) {
+             unsafe {
                 let clmul_res = clmul::gf128_reduce(transmute(a), transmute(b));
                 let scalar_res = scalar::gf128_reduce(a, b);
                 assert_eq!(scalar_res, transmute(clmul_res));
@@ -494,10 +506,10 @@ mod scalar_simd_tests {
         }
     }
 
-    #[test]
-    fn test_gf128_mul() {
-        for _ in 0..1000 {
-            let (a, b) = rng().random::<(u128, u128)>();
+    proptest! {
+        #[test]
+        #[should_panic]
+        fn test_gf128_mul(a in u128_with_edges(), b in u128_with_edges()) {
             unsafe {
                 let clmul_res = clmul::gf128_mul(transmute(a), transmute(b));
                 let scalar_res = scalar::gf128_mul(a, b);

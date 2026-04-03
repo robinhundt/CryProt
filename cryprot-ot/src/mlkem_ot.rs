@@ -57,13 +57,15 @@ const NUM_COEFFICIENTS: usize = 256;
 
 type Seed = [u8; 32];
 
+type Rho = [u8; 32];
+
 // Serialized t_hat is the encapsulation key minus the rho suffix.
-const T_HAT_BYTES_LEN: usize = ENCAPSULATION_KEY_LEN - size_of::<Seed>();
+const T_HAT_BYTES_LEN: usize = ENCAPSULATION_KEY_LEN - size_of::<Rho>();
 
 // Parsed encapsulation key: ek = (t_hat, rho).
 struct EncapsulationKey {
     t_hat: NttVector,
-    rho: Seed,
+    rho: Rho,
 }
 
 impl EncapsulationKey {
@@ -180,7 +182,11 @@ fn hash_ek(ek: &EncapsulationKey) -> NttVector {
 }
 
 // Generate a random encapsulation key using the given randomness and rho.
-fn random_ek(rng: &mut StdRng, rho: Seed) -> EncapsulationKey {
+//
+// The result is indistinguishable from a real encapsulation key, since a real
+// one has `t_hat = A_hat * s + e` and that is computationally indistinguishable
+// from a pseudorandom vector in `T_q^k`.
+fn random_ek(rng: &mut StdRng, rho: Rho) -> EncapsulationKey {
     let seed: Seed = rng.random();
     EncapsulationKey {
         t_hat: sample_ntt_vector(&seed),

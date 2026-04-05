@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/robinhundt/CryProt/compare/cryprot-ot-v0.2.2...cryprot-ot-v0.3.0) - 2026-04-05
+
+### Other
+
+- use the `Rho` type instead of `Seed` for `rho` in mlkem_ot
+- add ML-KEM as an option for base OT
+
 ## [0.2.2](https://github.com/robinhundt/CryProt/compare/cryprot-ot-v0.2.1...cryprot-ot-v0.2.2) - 2026-03-05
 
 ### Other

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/robinhundt/CryProt/compare/cryprot-core-v0.3.1...cryprot-core-v0.3.2) - 2026-04-05
+
+### Fixed
+
+- broken scalar clmul64 (issue [#86](https://github.com/robinhundt/CryProt/issues/86) fixed by [#87](https://github.com/robinhundt/CryProt/pull/86))
+
+### Other
+
+- *(deps)* bump proptest from 1.10.0 to 1.11.0
+- use proptest for gf128 tests
+
 ## [0.3.1](https://github.com/robinhundt/CryProt/compare/cryprot-core-v0.3.0...cryprot-core-v0.3.1) - 2026-03-05
 
 ### Added

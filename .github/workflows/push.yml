@@ -23,5 +23,8 @@ jobs:
       - name: Show CPU info
         run: lscpu
 
-      - name: Test
+      - name: Run tests (all features)
         run: cargo test --workspace --verbose --all-features --no-fail-fast
+
+      - name: Run tests (no features)
+        run: cargo test --workspace --verbose --no-fail-fast

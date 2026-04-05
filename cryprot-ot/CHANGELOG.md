@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0](https://github.com/robinhundt/CryProt/compare/cryprot-ot-v0.2.2...cryprot-ot-v0.3.0) - 2026-04-05
 
-### Other
+### Breaking
+- Previous `cryprot_ot::base` is moved to `cryprot_ot::simplest_ot`
 
-- use the `Rho` type instead of `Seed` for `rho` in mlkem_ot
-- add ML-KEM as an option for base OT
+### Added
+- add ML-KEM as an option for base OT ([#48](https://github.com/robinhundt/CryProt/pull/48) by @dartdart26)
+- added type aliases `BaseOt` and `BaseOtError` in `cryprot_ot` that point to Simplest OT or ML-KEM base OT
+    implementation, depending on if one of the `ml-kem-base-ot-<k>` features is enabled ([#48](https://github.com/robinhundt/CryProt/pull/48))
 
 ## [0.2.2](https://github.com/robinhundt/CryProt/compare/cryprot-ot-v0.2.1...cryprot-ot-v0.2.2) - 2026-03-05
 

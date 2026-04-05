@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- broken scalar clmul64
+- broken scalar clmul64 (issue [#86](https://github.com/robinhundt/CryProt/issues/86) fixed by [#87](https://github.com/robinhundt/CryProt/pull/86))
 
 ### Other
 

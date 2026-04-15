@@ -34,7 +34,7 @@ hybrid-array = { version = "0.4.8", features = ["bytemuck"] }
 libc = "0.2.183"
 ml-kem = "0.2.2"
 module-lattice = "0.1.0"
-sha3 = "0.10.8"
+sha3 = "0.11.0"
 ndarray = "0.17.2"
 num-traits = "0.2.19"
 rand = "0.10.0"

@@ -433,7 +433,7 @@ dependencies = [
  "criterion",
  "cryprot-core",
  "fastdivide",
- "hybrid-array 0.4.8",
+ "hybrid-array 0.4.10",
  "libote-codes",
  "rand 0.10.0",
  "seq-macro",
@@ -448,7 +448,7 @@ dependencies = [
  "bytemuck",
  "cpufeatures 0.3.0",
  "criterion",
- "hybrid-array 0.4.8",
+ "hybrid-array 0.4.10",
  "libc",
  "num-traits",
  "proptest",
@@ -501,7 +501,7 @@ dependencies = [
  "cryprot-pprf",
  "curve25519-dalek",
  "futures",
- "hybrid-array 0.4.8",
+ "hybrid-array 0.4.10",
  "ml-kem",
  "module-lattice",
  "rand 0.10.0",
@@ -548,7 +548,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "211f05e03c7d03754740fd9e585de910a095d6b99f8bcfffdef8319fa02a8331"
 dependencies = [
- "hybrid-array 0.4.8",
+ "hybrid-array 0.4.10",
 ]
 
 [[package]]
@@ -989,9 +989,9 @@ dependencies = [
 
 [[package]]
 name = "hybrid-array"
-version = "0.4.8"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8655f91cd07f2b9d0c24137bd650fe69617773435ee5ec83022377777ce65ef1"
+checksum = "3944cf8cf766b40e2a1a333ee5e9b563f854d5fa49d6a8ca2764e97c6eddb214"
 dependencies = [
  "bytemuck",
  "typenum",
@@ -1021,7 +1021,7 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4250ce6452e92010fdf7268ccc5d14faa80bb12fc741938534c58f16804e03c7"
 dependencies = [
- "hybrid-array 0.4.8",
+ "hybrid-array 0.4.10",
 ]
 
 [[package]]
@@ -1215,7 +1215,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dfecc750073acc09af2f8899b2342d520d570392ba1c3aed53eeb0d84ca4103"
 dependencies = [
- "hybrid-array 0.4.8",
+ "hybrid-array 0.4.10",
  "num-traits",
 ]
 

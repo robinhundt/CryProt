@@ -32,7 +32,7 @@ fastdivide = "0.4.2"
 futures = "0.3.32"
 hybrid-array = { version = "0.4.10", features = ["bytemuck"] }
 libc = "0.2.183"
-ml-kem = "0.2.2"
+ml-kem = "0.2.3"
 module-lattice = "0.1.0"
 sha3 = "0.10.8"
 ndarray = "0.17.2"

@@ -6,7 +6,6 @@ on:
       - "main"
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-C target-feature=+pclmulqdq,+avx2,+aes"
 
 jobs:
   test:
@@ -14,7 +13,15 @@ jobs:
     runs-on: "${{ matrix.os }}"
     strategy:
       matrix:
-        os: [ "ubuntu-latest", "windows-latest", "macos-latest" ]
+        include:
+          - os: "ubuntu-latest"
+            rustflags: "-C target-cpu=x86-64-v3 -C target-feature=+aes,+pclmulqdq"
+          - os: "windows-latest"
+            rustflags: ""
+          - os: "macos-latest"
+            rustflags: ""
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
     steps:
       - &checkout
         name: Check out repository
@@ -61,7 +68,7 @@ jobs:
 
       - name: Run miri test
         env:
-          RUSTFLAGS: "-C target-cpu=native"
+          RUSTFLAGS: "-C target-cpu=x86-64-v3 -C target-feature=+aes,+pclmulqdq"
           MIRIFLAGS: "-Zmiri-disable-isolation"
         run: cargo miri t -p cryprot-codes -p cryprot-core 
 

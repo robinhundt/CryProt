@@ -1,7 +1,8 @@
 name: bench
 
 env:
-  RUSTFLAGS: "-C target-feature=+pclmulqdq,+avx2,+aes"
+  RUSTFLAGS: "-C target-cpu=x86-64-v3 -C target-feature=+aes,+pclmulqdq"
+  CARGO_TERM_COLOR: always
 
 on:
   push:

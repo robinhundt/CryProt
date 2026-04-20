@@ -1,6 +1,7 @@
 //! Expand-convolute code of [[RRT23](https://eprint.iacr.org/2023/882)].
 use std::mem;
 
+#[cfg(target_feature = "sse4.1")]
 use bytemuck::{cast, cast_slice_mut};
 use cryprot_core::block::Block;
 use expander::ExpanderCode;
@@ -20,7 +21,7 @@ pub struct ExConvCode {
     message_size: usize,
 }
 
-/// Configugarion for the [`ExConvCode`].
+/// Configuration for the [`ExConvCode`].
 #[derive(Debug, Clone, Copy)]
 pub struct ExConvCodeConfig {
     pub seed: Block,

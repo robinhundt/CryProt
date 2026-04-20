@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  RUSTFLAGS: "-C target-feature=+pclmulqdq,+avx2,+aes"
+  CARGO_TERM_COLOR: always
 
 jobs:
   # Release unpublished packages.

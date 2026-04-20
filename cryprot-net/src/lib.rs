@@ -68,6 +68,11 @@ pub struct StreamManager {
     acceptor: QuicStreamAcceptor,
     cmd_send: mpsc::UnboundedSender<Cmd>,
     cmd_recv: mpsc::UnboundedReceiver<Cmd>,
+    maps: StreamMaps,
+}
+
+#[derive(Default)]
+pub struct StreamMaps {
     pending: HashMap<UniqueId, StreamSend>,
     accepted: HashMap<UniqueId, (QuicRecvStream, usize)>,
 }
@@ -150,8 +155,7 @@ impl StreamManager {
             acceptor,
             cmd_send,
             cmd_recv,
-            pending: Default::default(),
-            accepted: Default::default(),
+            maps: Default::default(),
         }
     }
 
@@ -171,45 +175,30 @@ impl StreamManager {
                             Self::accepted(stream, self.cmd_send.clone());
                         }
                         Ok(None) => {
-                            debug!("remote closed");
-                            return;
+                            debug!("remote closed, draining pending commands");
+                            break;
                         }
                         Err(err) => {
-                            error!(%err, "unable to accept stream");
-                            return;
+                            error!(%err, "unable to accept stream, draining pending commands");
+                            break;
                         }
                     }
                 }
                 Some(cmd) = self.cmd_recv.recv() => {   // recv() is cancel safe
                     debug!(?cmd, "received cmd");
-                    match cmd {
-                        Cmd::NewStream {uid, stream_return} => {
-                            if let Some(accepted) = self.accepted.remove(&uid) {
-                                if stream_return.send(accepted).is_err() {
-                                    debug!("accepted remote stream but local receiver is closed");
-                                }
-                                debug!("sending new stream to receiver");
-                                continue;
-                            }
-                            match self.pending.entry(uid) {
-                                Entry::Occupied(occupied_entry) => {
-                                    panic!("Duplicate unique id: {:?}", occupied_entry.key())
-                                },
-                                Entry::Vacant(vacant_entry) => {vacant_entry.insert(stream_return);},
-                            }
-                        }
-                        Cmd::AcceptedStream {uid, stream, bytes_read} => {
-                            if let Some(stream_ret) = self.pending.remove(&uid) {
-                               if stream_ret.send((stream, bytes_read)).is_err() {
-                                debug!("accepted remote stream but local receiver is closed");
-                               }
-                            } else {
-                                debug!("accepted stream but no pending");
-                                self.accepted.insert(uid, (stream, bytes_read));
-                            }
-                        }
-                    }
+                    self.maps.handle_cmd(cmd);
                 }
+            }
+        }
+        // The QUIC acceptor is done (remote closed or error), but there may be
+        // in-flight `Self::accepted` tasks that already received a stream and
+        // are reading the UniqueId. Drain remaining commands so those streams
+        // are matched with pending requests.
+        while let Some(cmd) = self.cmd_recv.recv().await {
+            debug!(?cmd, "received cmd (draining)");
+            self.maps.handle_cmd(cmd);
+            if self.maps.pending.is_empty() {
+                break;
             }
         }
     }
@@ -224,14 +213,51 @@ impl StreamManager {
                     return;
                 }
             };
-            cmd_send
-                .send(Cmd::AcceptedStream {
-                    uid,
-                    stream,
-                    bytes_read,
-                })
-                .expect("cmd_rcv is owned by StreamManager")
+            // StreamManager may have already exited if the connection closed
+            let _ = cmd_send.send(Cmd::AcceptedStream {
+                uid,
+                stream,
+                bytes_read,
+            });
         });
+    }
+}
+
+impl StreamMaps {
+    fn handle_cmd(&mut self, cmd: Cmd) {
+        match cmd {
+            Cmd::NewStream { uid, stream_return } => {
+                if let Some(accepted) = self.accepted.remove(&uid) {
+                    if stream_return.send(accepted).is_err() {
+                        debug!("accepted remote stream but local receiver is closed");
+                    }
+                    debug!("sending new stream to receiver");
+                    return;
+                }
+                match self.pending.entry(uid) {
+                    Entry::Occupied(occupied_entry) => {
+                        panic!("Duplicate unique id: {:?}", occupied_entry.key())
+                    }
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(stream_return);
+                    }
+                }
+            }
+            Cmd::AcceptedStream {
+                uid,
+                stream,
+                bytes_read,
+            } => {
+                if let Some(stream_ret) = self.pending.remove(&uid) {
+                    if stream_ret.send((stream, bytes_read)).is_err() {
+                        debug!("accepted remote stream but local receiver is closed");
+                    }
+                } else {
+                    debug!("accepted stream but no pending");
+                    self.accepted.insert(uid, (stream, bytes_read));
+                }
+            }
+        }
     }
 }
 

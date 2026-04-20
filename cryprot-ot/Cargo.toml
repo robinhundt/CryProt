@@ -27,7 +27,6 @@ bench = false
 [dependencies]
 bitvec = { workspace = true, features = ["serde"] }
 bytemuck.workspace = true
-cfg-if.workspace = true
 cryprot-codes.workspace = true
 cryprot-core = { workspace = true, features = ["tokio-rayon"] }
 cryprot-net.workspace = true

@@ -16,15 +16,18 @@ use ml_kem::{
 };
 // ML-KEM parameter set selection. If multiple features are enabled, the highest
 // wins.
-cfg_if::cfg_if! {
-    if #[cfg(feature = "ml-kem-base-ot-1024")] {
+cfg_select! {
+    feature = "ml-kem-base-ot-1024" => {
         use ml_kem::{MlKem1024 as MlKem, MlKem1024Params as MlKemParams};
-    } else if #[cfg(feature = "ml-kem-base-ot-768")] {
+    }
+    feature = "ml-kem-base-ot-768" => {
         use ml_kem::{MlKem768 as MlKem, MlKem768Params as MlKemParams};
-    } else if #[cfg(feature = "ml-kem-base-ot-512")] {
+    }
+    feature = "ml-kem-base-ot-512" => {
         use ml_kem::{MlKem512 as MlKem, MlKem512Params as MlKemParams};
     }
 }
+
 use module_lattice::{Encode, Field, NttPolynomial};
 use rand::{RngExt, rngs::StdRng};
 use serde::{Deserialize, Serialize};

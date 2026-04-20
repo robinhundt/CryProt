@@ -22,7 +22,7 @@ runs:
       uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
       id: toolchain
       with:
-        toolchain: ${{ inputs.nightly == 'true' && 'nightly-2026-01-20' || 'stable' }}
+        toolchain: ${{ inputs.nightly == 'true' && 'nightly-2026-04-19' || 'stable' }}
         components: ${{ inputs.components }}
 
     - name: Check version

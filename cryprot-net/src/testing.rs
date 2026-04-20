@@ -1,4 +1,7 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use anyhow::Context;
 use s2n_quic::{Client, Server, client::Connect, provider::limits::Limits};
@@ -23,7 +26,8 @@ pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
     let limits = Limits::new()
         .with_max_send_buffer_size(12 * MiB as u32)?
         .with_max_open_local_unidirectional_streams(max_streams)?
-        .with_max_open_remote_unidirectional_streams(max_streams)?;
+        .with_max_open_remote_unidirectional_streams(max_streams)?
+        .with_max_idle_timeout(Duration::from_secs(300))?;
 
     let addr = "127.0.0.1:0".parse()?;
     let io = || {

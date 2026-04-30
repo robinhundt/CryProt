@@ -1,5 +1,7 @@
 name: bench
 
+permissions: {}
+
 env:
   RUSTFLAGS: "-C target-cpu=x86-64-v3 -C target-feature=+aes,+pclmulqdq"
   CARGO_TERM_COLOR: always
@@ -21,10 +23,11 @@ on:
 
 jobs:
   benchmarks:
+    name: Benchmarks
     runs-on: "ubicloud-standard-4"
     steps:
       - name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
           ref: ${{ github.event.inputs.ref }}
@@ -40,7 +43,7 @@ jobs:
       - run: cargo --version
 
       - name: Install bencher
-        uses: bencherdev/bencher@fa25a72c516046b4c0e31659bef70c5266b0f94d # 0.6.4
+        uses: bencherdev/bencher@fa25a72c516046b4c0e31659bef70c5266b0f94d # v0.6.4
 
       - name: CPU information
         run: lscpu
@@ -49,13 +52,17 @@ jobs:
         uses: ubicloud/rust-cache@65b3ff06b9bcc69d88c25e212f1ae3d14a0953c3
 
       - name: Run benchmarks
+        env:
+          BRANCH: ${{ github.ref_name }}
+          FILTER: ${{ github.event.inputs.filter }}
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
         run: |
           bencher run \
           --project cryprot \
-          --token '${{ secrets.BENCHER_API_TOKEN }}' \
-          --branch '${{github.ref_name}}' \
+          --token "$BENCHER_API_TOKEN" \
+          --branch "$BRANCH" \
           --testbed ubicloud-standard-4 \
           --threshold-measure latency \
           --threshold-test t_test \
           --threshold-upper-boundary 0.99 \
-          'cargo bench ${{ github.event.inputs.filter }}'
+          'cargo bench "$FILTER"'

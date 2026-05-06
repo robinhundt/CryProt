@@ -991,20 +991,14 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
 ]
-
-[[package]]
-name = "hashbrown"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
 name = "heck"
@@ -1789,9 +1783,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-codec"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d07631cbc3e459992aff1dc0e80ebc36477096b385f8812f9fd0c1921b9e8a05"
+checksum = "22bacdd8e47b929c10802a93070890d26b8c0e510857113b8f098fca002aecf4"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1800,9 +1794,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic"
-version = "1.77.0"
+version = "1.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "648930dfc27a088346ff375368932afe354acb50eac483ff5cb3670d4f73a125"
+checksum = "82c23e80ef5205e7f197f6fb0922f3f66eb6599fd826cbf5eb0dc0edba17aee5"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -1823,9 +1817,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-core"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a721bf0aa5081236def820023fd740a28f8984f01fe7a41b99d7882ddb60ac9"
+checksum = "8b0d2cd0e789568ac5c374ea7fbf599e1a9d63362bd37baf2d45d386f5f3d25f"
 dependencies = [
  "atomic-waker",
  "byteorder",
@@ -1844,9 +1838,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-crypto"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4abf50bd79169d73bb316c9bb76e1702e4d80343cd2739322424cb930c4d171"
+checksum = "d0b6fdfaca6213006dc5163ad8788010f6b5861e6e41352b0a3b00e0fc0930d4"
 dependencies = [
  "aws-lc-rs",
  "cfg-if",
@@ -1858,9 +1852,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-platform"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "012f2a45252218f287ae7a5a46702fe154cba95f562ebd77e09211b9765a12b9"
+checksum = "7c4742176bbbc522d78e415dfdd3fba84b09ce4744bce20b2f7a6e8ff0c62a3a"
 dependencies = [
  "cfg-if",
  "futures",
@@ -1873,9 +1867,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-rustls"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "881cd30478a0f6817ef980b9d038203aba2ed280ed87bfbb95ad4309d07db717"
+checksum = "201a367dbdadc85c9e1fda1be03205740bf2cc848f9436189f88d9b7f3807554"
 dependencies = [
  "bytes",
  "rustls",
@@ -1887,9 +1881,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-tls"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d61ded108683f2ede8e16fb1214f25a970137e13ebfde92b023377e20fa058b6"
+checksum = "5368d27604ea26aab1dac1df1a84b676a519e139d7927d9afbd6a8137c9129b7"
 dependencies = [
  "bytes",
  "errno",
@@ -1902,9 +1896,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-tls-default"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "024a66071dfb37bdcdac1e29c58f803b323e78d33d0f9f05619d05b321039a17"
+checksum = "e710c8e03558c1eaca90356f34821f6d3b01bf4bf9cc439935cb3002eab2e1d4"
 dependencies = [
  "s2n-quic-rustls",
  "s2n-quic-tls",
@@ -1912,14 +1906,14 @@ dependencies = [
 
 [[package]]
 name = "s2n-quic-transport"
-version = "0.77.0"
+version = "0.78.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94b2324ea380a371c384fcb3bd0216cd1020d45c81d36c01741592bb044e3e09"
+checksum = "08db5b4830452c1fff9c9fa93a3fa030c1d7d38a9fc96815e0df98e407fae612"
 dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "intrusive-collections",
  "once_cell",
  "s2n-codec",

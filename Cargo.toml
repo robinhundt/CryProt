@@ -32,7 +32,7 @@ futures = "0.3.32"
 hybrid-array = { version = "0.4.11", features = ["bytemuck"] }
 libc = "0.2.183"
 ml-kem = "0.2.3"
-module-lattice = "0.2.1"
+module-lattice = "0.2.2"
 ndarray = "0.17.2"
 num-traits = "0.2.19"
 rand = "0.10.0"

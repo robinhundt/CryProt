@@ -37,7 +37,7 @@
           fx.complete.rustfmt
         ];
         mkDevShell = tc: pkgs.mkShell {
-          packages = [ tc pkgs.rust-analyzer ];
+          packages = [ tc pkgs.rust-analyzer pkgs.zizmor ];
 
           nativeBuildInputs = with pkgs; [ cmake pkg-config ];
 

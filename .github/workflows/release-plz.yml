@@ -1,5 +1,7 @@
 name: Release-plz
 
+permissions: {}
+
 on:
   push:
     branches:
@@ -13,13 +15,11 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
+    environment: release
     if: ${{ github.repository_owner == 'robinhundt' }}
-    permissions:
-      contents: write
     steps:
-      - &checkout
-        name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -27,17 +27,17 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - &get-release-app-token
         # Generating a GitHub token, so that PRs and tags created by
         # the release-plz-action can trigger actions workflows.
-        name: Generate GitHub token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # 3.1.1
+      - name: Generate GitHub token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         id: generate-token
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_PRIVATE_KEY }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Run release-plz
-        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11 # 0.5.128
+        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11 # v0.5.128
         with:
           command: release
         env:
@@ -49,21 +49,28 @@ jobs:
     name: Release-plz PR
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'robinhundt' }}
-    permissions:
-      contents: write
-      pull-requests: write
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
-      - *checkout
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
 
-      - *get-release-app-token
+      - name: Generate GitHub token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        id: generate-token
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Run release-plz
-        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11 # 0.5.128
+        uses: release-plz/action@1528104d2ca23787631a1c1f022abb64b34c1e11 # v0.5.128
         with:
           command: release-pr
         env:

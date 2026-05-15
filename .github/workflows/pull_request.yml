@@ -1,5 +1,7 @@
 name: Pull Request
 
+permissions: {}
+
 on:
   pull_request:
     branches:
@@ -25,7 +27,7 @@ jobs:
     steps:
       - &checkout
         name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
           fetch-depth: 0
@@ -40,7 +42,7 @@ jobs:
 
       - name: Install NASM
         if: ${{ matrix.os == 'windows-latest' }}
-        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # 1.5.2
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
 
       - name: Run tests (all features)
         run: cargo test --workspace --verbose --all-features --no-fail-fast ${{ runner.os == 'macOS' && '-- --test-threads=1' || '' }}
@@ -54,7 +56,7 @@ jobs:
     steps:
       - &checkout
         name: Check out repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # 6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
           fetch-depth: 0

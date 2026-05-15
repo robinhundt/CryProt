@@ -48,6 +48,7 @@ jobs:
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
+    environment: release
     if: ${{ github.repository_owner == 'robinhundt' }}
     concurrency:
       group: release-plz-${{ github.ref }}

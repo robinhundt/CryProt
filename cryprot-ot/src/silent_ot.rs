@@ -652,7 +652,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn correlated_silent_ot() {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
@@ -674,7 +674,7 @@ mod tests {
         check_correlated(&r_ot, &s_ot, Some(&choices), delta);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn random_silent_ot() {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
@@ -689,7 +689,7 @@ mod tests {
         check_random(count, &s_ot, &r_ot[..], &choices);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rot_trait_for_silent_ot() {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();
@@ -704,7 +704,7 @@ mod tests {
         check_random(count, &s_ot, &r_ot, &c);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_malicious_silent_ot() {
         let _g = init_tracing();
         let (c1, c2) = local_conn().await.unwrap();

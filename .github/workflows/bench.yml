@@ -43,7 +43,7 @@ jobs:
       - run: cargo --version
 
       - name: Install bencher
-        uses: bencherdev/bencher@fa25a72c516046b4c0e31659bef70c5266b0f94d # v0.6.4
+        uses: bencherdev/bencher@99117a626dc634b8ad817f38abcf4876b3b0668b # v0.6.5
 
       - name: CPU information
         run: lscpu

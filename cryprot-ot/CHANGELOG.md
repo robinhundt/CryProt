@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/robinhundt/CryProt/compare/cryprot-ot-v0.3.1...cryprot-ot-v0.3.2) - 2026-05-27
+
+### Other
+
+- *(deps)* update sha3 to 0.12 and add shake 0.1
+- *(deps)* update ml-kem to 0.3.2
+
 ## [0.3.1](https://github.com/robinhundt/CryProt/compare/cryprot-ot-v0.3.0...cryprot-ot-v0.3.1) - 2026-05-15
 
 ### Added

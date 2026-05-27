@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5](https://github.com/robinhundt/CryProt/compare/cryprot-pprf-v0.2.4...cryprot-pprf-v0.2.5) - 2026-05-27
+
+### Other
+
+- updated the following local packages: cryprot-core, cryprot-core, cryprot-net, cryprot-net
+
 ## [0.2.4](https://github.com/robinhundt/CryProt/compare/cryprot-pprf-v0.2.3...cryprot-pprf-v0.2.4) - 2026-05-15
 
 ### Other

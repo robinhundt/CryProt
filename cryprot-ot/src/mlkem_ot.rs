@@ -6,25 +6,26 @@
 
 use std::{io, mem::size_of};
 
-use cryprot_core::{Block, buf::Buf, rand_compat::RngCompat, random_oracle::RandomOracle};
+use cryprot_core::{Block, buf::Buf, random_oracle::RandomOracle};
 use cryprot_net::{Connection, ConnectionError};
 use futures::{SinkExt, StreamExt};
 use hybrid_array::typenum::Unsigned;
 use ml_kem::{
-    Ciphertext as MlKemCiphertext, EncodedSizeUser, KemCore, ParameterSet, SharedKey,
+    Ciphertext as MlKemCiphertext, InvalidKey, Kem, KeyExport, KeySizeUser, ParameterSet,
+    SharedKey,
     kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey as MlKemEncapsulationKey},
 };
 // ML-KEM parameter set selection. If multiple features are enabled, the highest
 // wins.
 cfg_select! {
     feature = "ml-kem-base-ot-1024" => {
-        use ml_kem::{MlKem1024 as MlKem, MlKem1024Params as MlKemParams};
+        use ml_kem::{MlKem1024 as MlKem};
     }
     feature = "ml-kem-base-ot-768" => {
-        use ml_kem::{MlKem768 as MlKem, MlKem768Params as MlKemParams};
+        use ml_kem::{MlKem768 as MlKem};
     }
     feature = "ml-kem-base-ot-512" => {
-        use ml_kem::{MlKem512 as MlKem, MlKem512Params as MlKemParams};
+        use ml_kem::{MlKem512 as MlKem};
     }
 }
 
@@ -44,15 +45,14 @@ use crate::{Connected, RotReceiver, RotSender, SemiHonest, phase};
 module_lattice::define_field!(MlKemField, u16, u32, u64, 3329);
 
 // Module dimension derived from the chosen ML-KEM parameter set.
-type K = <MlKemParams as ParameterSet>::K;
+type K = <MlKem as ParameterSet>::K;
 
 type NttVector = module_lattice::NttVector<MlKemField, K>;
 
 type U12 = hybrid_array::typenum::U12;
 
-const ENCAPSULATION_KEY_LEN: usize =
-    <MlKemEncapsulationKey<MlKemParams> as EncodedSizeUser>::EncodedSize::USIZE;
-const CIPHERTEXT_LEN: usize = <MlKem as KemCore>::CiphertextSize::USIZE;
+const ENCAPSULATION_KEY_LEN: usize = <MlKemEncapsulationKey<MlKem> as KeySizeUser>::KeySize::USIZE;
+const CIPHERTEXT_LEN: usize = <MlKem as Kem>::CiphertextSize::USIZE;
 const HASH_DOMAIN_SEPARATOR: &[u8] = b"MlKemOt";
 
 // Number of coefficients per polynomial (FIPS 203, Section 2: n = 256).
@@ -215,13 +215,15 @@ pub enum Error {
     ClosedStream,
     #[error("ML-KEM decapsulation failed")]
     Decapsulation,
+    #[error("EncapsulationKey Validation failed")]
+    EncapsKeyValidation(#[source] InvalidKey),
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 struct EncapsulationKeyBytes(#[serde(with = "serde_bytes")] [u8; ENCAPSULATION_KEY_LEN]);
 
-impl From<&EncapsulationKey> for EncapsulationKeyBytes {
-    fn from(ek: &EncapsulationKey) -> Self {
+impl From<EncapsulationKey> for EncapsulationKeyBytes {
+    fn from(ek: EncapsulationKey) -> Self {
         Self(ek.to_bytes())
     }
 }
@@ -324,8 +326,8 @@ impl RotSender for MlKemOt {
             let ek_1 = &r_1 + &hash_ek(&r_0);
 
             // Step 7: Encapsulate to both reconstructed keys.
-            let (ct_0, ss_0) = encapsulate(&(&ek_0).into(), &mut self.rng);
-            let (ct_1, ss_1) = encapsulate(&(&ek_1).into(), &mut self.rng);
+            let (ct_0, ss_0) = encapsulate(ek_0.into(), &mut self.rng)?;
+            let (ct_1, ss_1) = encapsulate(ek_1.into(), &mut self.rng)?;
 
             // Step 8: Derive OT output keys.
             let key_0 = derive_ot_key(&ss_0, i);
@@ -361,15 +363,15 @@ impl RotReceiver for MlKemOt {
 
         let (mut send, mut recv) = self.conn.byte_stream().await?;
 
-        let mut decap_keys: Vec<DecapsulationKey<MlKemParams>> = Vec::with_capacity(count);
+        let mut decap_keys: Vec<DecapsulationKey<MlKem>> = Vec::with_capacity(count);
         let mut rs_0 = Vec::with_capacity(count);
         let mut rs_1 = Vec::with_capacity(count);
 
         for choice in choices.iter() {
             // Step 1: Generate real keypair.
-            let (dk, ek) = MlKem::generate(&mut RngCompat(&mut self.rng));
+            let (dk, ek) = MlKem::generate_keypair_from_rng(&mut self.rng);
             let ek_bytes: [u8; ENCAPSULATION_KEY_LEN] = ek
-                .as_bytes()
+                .to_bytes()
                 .as_slice()
                 .try_into()
                 .expect("incorrect encapsulation key size");
@@ -380,8 +382,8 @@ impl RotReceiver for MlKemOt {
 
             // Step 3: Compute real key: r_b = ek - hash_ek(r_{1-b}).
             let r_b = &ek - &hash_ek(&r_1_b);
-            let r_b_bytes: EncapsulationKeyBytes = (&r_b).into();
-            let r_1_b_bytes: EncapsulationKeyBytes = (&r_1_b).into();
+            let r_b_bytes: EncapsulationKeyBytes = r_b.into();
+            let r_1_b_bytes: EncapsulationKeyBytes = r_1_b.into();
 
             // Step 4: Select (r_0, r_1) based on choice bit (constant-time).
             // If b=0: r_0 = real, r_1 = random.
@@ -425,7 +427,7 @@ impl RotReceiver for MlKemOt {
                 .as_slice()
                 .try_into()
                 .expect("incorrect ciphertext size");
-            let shared_secret = dk.decapsulate(&ct_b).map_err(|_| Error::Decapsulation)?;
+            let shared_secret = dk.decapsulate(&ct_b);
             let key_b = derive_ot_key(&shared_secret, i);
             ots[i] = key_b;
         }
@@ -435,25 +437,22 @@ impl RotReceiver for MlKemOt {
 }
 
 // Encapsulates to the given key, returning the ciphertext and the shared key.
-// Note: ML-KEM encapsulation is infallible - the Result in the ml-kem crate is
-// for API generality.
 fn encapsulate(
-    ek: &EncapsulationKeyBytes,
+    ek: EncapsulationKeyBytes,
     rng: &mut StdRng,
-) -> (CiphertextBytes, SharedKey<MlKem>) {
-    let parsed_ek = MlKemEncapsulationKey::<MlKemParams>::from_bytes((&ek.0).into());
-    let (ct, ss): (MlKemCiphertext<MlKem>, SharedKey<MlKem>) = parsed_ek
-        .encapsulate(&mut RngCompat(rng))
-        .expect("encapsulation failed");
-    (
+) -> Result<(CiphertextBytes, SharedKey), Error> {
+    let parsed_ek =
+        MlKemEncapsulationKey::<MlKem>::new(&ek.0.into()).map_err(Error::EncapsKeyValidation)?;
+    let (ct, ss): (MlKemCiphertext<MlKem>, SharedKey) = parsed_ek.encapsulate_with_rng(rng);
+    Ok((
         CiphertextBytes(ct.as_slice().try_into().expect("incorrect ciphertext size")),
         ss,
-    )
+    ))
 }
 
 // Derive an OT key from the ML-KEM shared key using a random oracle XOF,
 // returning a Block-sized (128-bit) output.
-fn derive_ot_key(key: &SharedKey<MlKem>, tweak: usize) -> Block {
+fn derive_ot_key(key: &SharedKey, tweak: usize) -> Block {
     let mut ro = RandomOracle::new();
     ro.update(HASH_DOMAIN_SEPARATOR);
     ro.update(key.as_slice());

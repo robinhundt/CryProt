@@ -32,10 +32,8 @@ cfg_select! {
 use module_lattice::{Encode, Field, NttPolynomial};
 use rand::{RngExt, rngs::StdRng};
 use serde::{Deserialize, Serialize};
-use sha3::{
-    Digest, Shake128,
-    digest::{ExtendableOutput, Update, XofReader},
-};
+use sha3::Digest;
+use shake::{ExtendableOutput, Shake128, Update, XofReader};
 use subtle::{Choice, ConditionallySelectable};
 use tracing::Level;
 

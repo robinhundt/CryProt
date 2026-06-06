@@ -5,10 +5,6 @@ use std::{
     io::{Error, IoSlice},
     mem,
     pin::{Pin, pin},
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
     task::{Context, Poll},
 };
 
@@ -81,7 +77,7 @@ pub struct StreamManager {
 #[derive(Debug)]
 pub struct Connection {
     cids: Vec<ConnectionId>,
-    next_cid: Arc<AtomicU32>,
+    next_cid: u32,
     handle: Handle,
     cmd: mpsc::UnboundedSender<Cmd>,
     next_implicit_id: u64,
@@ -258,7 +254,7 @@ impl Connection {
         let stream_manager = StreamManager::new(acceptor);
         let conn = Self {
             cids: vec![],
-            next_cid: Arc::new(AtomicU32::new(0)),
+            next_cid: 0,
             handle,
             cmd: stream_manager.cmd_send.clone(),
             next_implicit_id: 0,
@@ -272,12 +268,13 @@ impl Connection {
     /// in no immediate communication and is a fast synchronous operation.
     #[tracing::instrument(level = Level::DEBUG, skip(self), ret)]
     pub fn sub_connection(&mut self) -> Self {
-        let cid = self.next_cid.fetch_add(1, Ordering::Relaxed);
+        let cid = self.next_cid;
+        self.next_cid += 1;
         let mut cids = self.cids.clone();
         cids.push(ConnectionId(cid));
         Self {
             cids,
-            next_cid: Arc::new(AtomicU32::new(0)),
+            next_cid: 0,
             handle: self.handle.clone(),
             cmd: self.cmd.clone(),
             next_implicit_id: 0,

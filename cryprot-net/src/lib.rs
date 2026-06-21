@@ -188,14 +188,23 @@ impl StreamManager {
         }
         // The QUIC acceptor is done (remote closed or error), but there may be
         // in-flight `Self::accepted` tasks that already received a stream and
-        // are reading the UniqueId. Drain remaining commands so those streams
-        // are matched with pending requests.
-        while let Ok(cmd) = self.cmd_recv.try_recv() {
+        // are still `await`ing on reading the UniqueId before they send their
+        // `Cmd::AcceptedStream`. We must keep handling commands until those
+        // tasks complete, otherwise we'd drop the paired `pending` request and
+        // the peer's stream would error out.
+        //
+        // We no longer accept new streams, so drop our own command sender. The
+        // remaining senders are held by live `Connection`s and the in-flight
+        // `accepted` tasks; once all of those are gone, `recv()` returns `None`
+        // and we stop. Using `recv().await` rather than `try_recv()` is crucial:
+        // an `accepted` task whose UniqueId read has not finished yet would be
+        // missed by `try_recv` (the channel is transiently empty), dropping the
+        // matching `pending` oneshot. This race is timing dependent and was
+        // observed on macOS/NixOS but not on the Linux CI runner.
+        drop(self.cmd_send);
+        while let Some(cmd) = self.cmd_recv.recv().await {
             debug!(?cmd, "received cmd (draining)");
             self.maps.handle_cmd(cmd);
-            if self.maps.pending.is_empty() {
-                break;
-            }
         }
     }
 

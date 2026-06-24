@@ -64,6 +64,11 @@ pub struct StreamManager {
     acceptor: QuicStreamAcceptor,
     cmd_send: mpsc::UnboundedSender<Cmd>,
     cmd_recv: mpsc::UnboundedReceiver<Cmd>,
+    maps: StreamMaps,
+}
+
+#[derive(Default)]
+struct StreamMaps {
     pending: HashMap<UniqueId, StreamSend>,
     accepted: HashMap<UniqueId, (QuicRecvStream, usize)>,
 }
@@ -146,8 +151,7 @@ impl StreamManager {
             acceptor,
             cmd_send,
             cmd_recv,
-            pending: Default::default(),
-            accepted: Default::default(),
+            maps: Default::default(),
         }
     }
 
@@ -167,46 +171,40 @@ impl StreamManager {
                             Self::accepted(stream, self.cmd_send.clone());
                         }
                         Ok(None) => {
-                            debug!("remote closed");
-                            return;
+                            debug!("remote closed, draining pending commands");
+                            break;
                         }
                         Err(err) => {
-                            error!(%err, "unable to accept stream");
-                            return;
+                            error!(%err, "unable to accept stream, draining pending commands");
+                            break;
                         }
                     }
                 }
                 Some(cmd) = self.cmd_recv.recv() => {   // recv() is cancel safe
                     debug!(?cmd, "received cmd");
-                    match cmd {
-                        Cmd::NewStream {uid, stream_return} => {
-                            if let Some(accepted) = self.accepted.remove(&uid) {
-                                if stream_return.send(accepted).is_err() {
-                                    debug!("accepted remote stream but local receiver is closed");
-                                }
-                                debug!("sending new stream to receiver");
-                                continue;
-                            }
-                            match self.pending.entry(uid) {
-                                Entry::Occupied(occupied_entry) => {
-                                    panic!("Duplicate unique id: {:?}", occupied_entry.key())
-                                },
-                                Entry::Vacant(vacant_entry) => {vacant_entry.insert(stream_return);},
-                            }
-                        }
-                        Cmd::AcceptedStream {uid, stream, bytes_read} => {
-                            if let Some(stream_ret) = self.pending.remove(&uid) {
-                               if stream_ret.send((stream, bytes_read)).is_err() {
-                                debug!("accepted remote stream but local receiver is closed");
-                               }
-                            } else {
-                                debug!("accepted stream but no pending");
-                                self.accepted.insert(uid, (stream, bytes_read));
-                            }
-                        }
-                    }
+                    self.maps.handle_cmd(cmd);
                 }
             }
+        }
+        // The QUIC acceptor is done (remote closed or error), but there may be
+        // in-flight `Self::accepted` tasks that already received a stream and
+        // are still `await`ing on reading the UniqueId before they send their
+        // `Cmd::AcceptedStream`. We must keep handling commands until those
+        // tasks complete, otherwise we'd drop the paired `pending` request and
+        // the peer's stream would error out.
+        //
+        // We no longer accept new streams, so drop our own command sender. The
+        // remaining senders are held by live `Connection`s and the in-flight
+        // `accepted` tasks; once all of those are gone, `recv()` returns `None`
+        // and we stop. Using `recv().await` rather than `try_recv()` is crucial:
+        // an `accepted` task whose UniqueId read has not finished yet would be
+        // missed by `try_recv` (the channel is transiently empty), dropping the
+        // matching `pending` oneshot. This race is timing dependent and was
+        // observed on macOS/NixOS but not on the Linux CI runner.
+        drop(self.cmd_send);
+        while let Some(cmd) = self.cmd_recv.recv().await {
+            debug!(?cmd, "received cmd (draining)");
+            self.maps.handle_cmd(cmd);
         }
     }
 
@@ -220,14 +218,51 @@ impl StreamManager {
                     return;
                 }
             };
-            cmd_send
-                .send(Cmd::AcceptedStream {
-                    uid,
-                    stream,
-                    bytes_read,
-                })
-                .expect("cmd_rcv is owned by StreamManager")
+            // StreamManager may have already exited if the connection closed
+            let _ = cmd_send.send(Cmd::AcceptedStream {
+                uid,
+                stream,
+                bytes_read,
+            });
         });
+    }
+}
+
+impl StreamMaps {
+    fn handle_cmd(&mut self, cmd: Cmd) {
+        match cmd {
+            Cmd::NewStream { uid, stream_return } => {
+                if let Some(accepted) = self.accepted.remove(&uid) {
+                    if stream_return.send(accepted).is_err() {
+                        debug!("accepted remote stream but local receiver is closed");
+                    }
+                    debug!("sending new stream to receiver");
+                    return;
+                }
+                match self.pending.entry(uid) {
+                    Entry::Occupied(occupied_entry) => {
+                        panic!("Duplicate unique id: {:?}", occupied_entry.key())
+                    }
+                    Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(stream_return);
+                    }
+                }
+            }
+            Cmd::AcceptedStream {
+                uid,
+                stream,
+                bytes_read,
+            } => {
+                if let Some(stream_ret) = self.pending.remove(&uid) {
+                    if stream_ret.send((stream, bytes_read)).is_err() {
+                        debug!("accepted remote stream but local receiver is closed");
+                    }
+                } else {
+                    debug!("accepted stream but no pending");
+                    self.accepted.insert(uid, (stream, bytes_read));
+                }
+            }
+        }
     }
 }
 
@@ -250,7 +285,18 @@ pub enum ConnectionError {
 
 impl Connection {
     pub fn new(quic_conn: s2n_quic::Connection) -> (Self, StreamManager) {
-        let (handle, acceptor) = quic_conn.split();
+        let (mut handle, acceptor) = quic_conn.split();
+        // Keep the connection alive even when no application data is exchanged.
+        // MPC protocols routinely interleave network communication with long,
+        // purely-local compute phases (e.g. AES tree expansion offloaded to
+        // rayon). During such a phase no QUIC packets flow and, under CPU
+        // contention, the gap can exceed the negotiated idle timeout, causing
+        // the connection to be torn down with `IdleTimerExpired`. Enabling
+        // keep-alive makes s2n-quic emit periodic PINGs (see
+        // `with_max_keep_alive_period`) so the idle timer is reset while we
+        // compute. `keep_alive` only fails if the connection is already closed,
+        // in which case the manager/handle will surface the error anyway.
+        let _ = handle.keep_alive(true);
         let stream_manager = StreamManager::new(acceptor);
         let conn = Self {
             cids: vec![],

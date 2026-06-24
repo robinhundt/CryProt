@@ -285,7 +285,18 @@ pub enum ConnectionError {
 
 impl Connection {
     pub fn new(quic_conn: s2n_quic::Connection) -> (Self, StreamManager) {
-        let (handle, acceptor) = quic_conn.split();
+        let (mut handle, acceptor) = quic_conn.split();
+        // Keep the connection alive even when no application data is exchanged.
+        // MPC protocols routinely interleave network communication with long,
+        // purely-local compute phases (e.g. AES tree expansion offloaded to
+        // rayon). During such a phase no QUIC packets flow and, under CPU
+        // contention, the gap can exceed the negotiated idle timeout, causing
+        // the connection to be torn down with `IdleTimerExpired`. Enabling
+        // keep-alive makes s2n-quic emit periodic PINGs (see
+        // `with_max_keep_alive_period`) so the idle timer is reset while we
+        // compute. `keep_alive` only fails if the connection is already closed,
+        // in which case the manager/handle will surface the error anyway.
+        let _ = handle.keep_alive(true);
         let stream_manager = StreamManager::new(acceptor);
         let conn = Self {
             cids: vec![],

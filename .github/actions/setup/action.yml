@@ -19,7 +19,7 @@ runs:
   using: "composite"
   steps:
     - name: Install toolchain
-      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+      uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
       id: toolchain
       with:
         toolchain: ${{ inputs.nightly == 'true' && 'nightly-2026-04-19' || 'stable' }}

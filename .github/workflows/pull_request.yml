@@ -91,7 +91,7 @@ jobs:
 
       # use stable toolchain for clippy to avoid CI failures due to unfinished lints
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: "stable"
           components: "clippy"

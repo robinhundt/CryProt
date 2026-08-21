@@ -83,8 +83,8 @@ impl ExpanderCode {
             None
         };
 
-        let mut chunk_iter = out.chunks_exact_mut(8);
-        for out_chunk in chunk_iter.by_ref() {
+        let (chunks, rest) = out.as_chunks_mut::<8>();
+        for out_chunk in chunks {
             if let Some((ref mut reg_gen, reg, step)) = reg_gen {
                 for j in 0..reg {
                     let mut rr = [0; 8];
@@ -112,7 +112,7 @@ impl ExpanderCode {
             }
         }
 
-        for out in chunk_iter.into_remainder() {
+        for out in rest {
             if let Some((ref mut reg_gen, reg, step)) = reg_gen {
                 for j in 0..reg {
                     *out ^= inp[reg_gen.get() + j * step];

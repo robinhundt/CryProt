@@ -617,8 +617,10 @@ impl<S: Security> RotReceiver for OtExtensionReceiver<S> {
                     .chain((batch_size_remainder != 0).then_some(batch_size_remainder));
 
                 let choice_blocks: Vec<_> = choice_vec
-                    .chunks_exact(Block::BYTES)
-                    .map(|chunk| Block::try_from(chunk).expect("chunk is 16 bytes"))
+                    .as_chunks::<{ Block::BYTES }>()
+                    .0
+                    .iter()
+                    .map(|chunk| Block::new(*chunk))
                     .collect();
 
                 let challenges: Vec<Block> = rng
@@ -757,7 +759,7 @@ impl<S: Security> CotReceiver for OtExtensionReceiver<S> {
 fn choices_to_u8_vec(choices: &[Choice]) -> Vec<u8> {
     assert_eq!(0, choices.len() % 8);
     let mut v = vec![0_u8; choices.len() / 8];
-    for (chunk, byte) in choices.chunks_exact(8).zip(&mut v) {
+    for (chunk, byte) in choices.as_chunks::<8>().0.iter().zip(&mut v) {
         for (i, choice) in chunk.iter().enumerate() {
             *byte ^= choice.unwrap_u8() << i;
         }

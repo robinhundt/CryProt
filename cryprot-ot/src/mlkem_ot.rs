@@ -19,13 +19,13 @@ use ml_kem::{
 // wins.
 cfg_select! {
     feature = "ml-kem-base-ot-1024" => {
-        use ml_kem::{MlKem1024 as MlKem};
+        use ml_kem::MlKem1024 as MlKem;
     }
     feature = "ml-kem-base-ot-768" => {
-        use ml_kem::{MlKem768 as MlKem};
+        use ml_kem::MlKem768 as MlKem;
     }
     feature = "ml-kem-base-ot-512" => {
-        use ml_kem::{MlKem512 as MlKem};
+        use ml_kem::MlKem512 as MlKem;
     }
 }
 

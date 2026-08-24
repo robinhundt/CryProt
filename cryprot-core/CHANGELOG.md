@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5](https://github.com/robinhundt/CryProt/compare/cryprot-core-v0.3.4...cryprot-core-v0.3.5) - 2026-08-24
+
+### Other
+
+- *(clippy)* fix clippy warnings
+
 ## [0.3.4](https://github.com/robinhundt/CryProt/compare/cryprot-core-v0.3.3...cryprot-core-v0.3.4) - 2026-05-27
 
 ### Other

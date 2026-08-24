@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6](https://github.com/robinhundt/CryProt/compare/cryprot-net-v0.2.5...cryprot-net-v0.2.6) - 2026-08-24
+
+### Fixed
+
+- *(net)* remove unnecessary Arc<AtomicU32>>
+
 ## [0.2.5](https://github.com/robinhundt/CryProt/compare/cryprot-net-v0.2.4...cryprot-net-v0.2.5) - 2026-05-27
 
 ### Other

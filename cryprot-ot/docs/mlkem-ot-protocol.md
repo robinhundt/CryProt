@@ -110,13 +110,14 @@ Sampling is identical to the one on `hash_ek`, except that the seed is random ra
 
 4. **Send to sender:**
    ```
-   Receiver -> Sender: (r_0, r_1)
+   Receiver -> Sender: (r_0.t_hat, r_1.t_hat, rho)
    ```
-   Each serialized as `ByteEncode_12(r_j.t_hat) || rho`.
+   Each `r_j.t_hat` is serialized as `ByteEncode_12(r_j.t_hat)`. Both `r_j` share
+   `ek.rho`, so it is sent once.
 
 ### Sender
 
-5. **Receive `(r_0, r_1)` from the receiver**
+5. **Receive `(r_0.t_hat, r_1.t_hat, rho)` from the receiver**
 
 6. **For each `j in {0, 1}`, reconstruct the encapsulation key:**
    ```

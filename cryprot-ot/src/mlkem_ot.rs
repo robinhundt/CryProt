@@ -70,15 +70,36 @@ struct EncapsulationKey {
 }
 
 impl EncapsulationKey {
-    fn from_bytes(bytes: &[u8; ENCAPSULATION_KEY_LEN]) -> Self {
-        let enc = bytes[..T_HAT_BYTES_LEN]
+    fn from_parts(t_hat_bytes: &THatBytes, rho: Rho) -> Self {
+        let enc = t_hat_bytes
+            .0
+            .as_slice()
             .try_into()
             .expect("t_hat length mismatch");
         let t_hat = <NttVector as Encode<U12>>::decode(enc);
+        Self { t_hat, rho }
+    }
+
+    fn from_bytes(bytes: &[u8; ENCAPSULATION_KEY_LEN]) -> Self {
+        let t_hat_bytes = THatBytes(
+            bytes[..T_HAT_BYTES_LEN]
+                .try_into()
+                .expect("t_hat length mismatch"),
+        );
         let rho = bytes[T_HAT_BYTES_LEN..]
             .try_into()
             .expect("rho length mismatch");
-        Self { t_hat, rho }
+        Self::from_parts(&t_hat_bytes, rho)
+    }
+
+    fn t_hat_bytes(&self) -> THatBytes {
+        let encoded = <NttVector as Encode<U12>>::encode(&self.t_hat);
+        THatBytes(
+            encoded
+                .as_slice()
+                .try_into()
+                .expect("t_hat length mismatch"),
+        )
     }
 
     fn to_bytes(&self) -> [u8; ENCAPSULATION_KEY_LEN] {
@@ -201,14 +222,8 @@ pub enum Error {
     Connection(#[from] ConnectionError),
     #[error("io communication error")]
     Io(#[from] io::Error),
-    #[error(
-        "invalid count of keys/ciphertexts received. expected: {expected}, actual_0: {actual_0}, actual_1: {actual_1}"
-    )]
-    InvalidDataCount {
-        expected: usize,
-        actual_0: usize,
-        actual_1: usize,
-    },
+    #[error("invalid data count received. expected: {expected}, actual: {actual}")]
+    InvalidDataCount { expected: usize, actual: usize },
     #[error("expected message but stream is closed")]
     ClosedStream,
     #[error("ML-KEM decapsulation failed")]
@@ -218,17 +233,11 @@ pub enum Error {
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
-struct EncapsulationKeyBytes(#[serde(with = "serde_bytes")] [u8; ENCAPSULATION_KEY_LEN]);
+struct THatBytes(#[serde(with = "serde_bytes")] [u8; T_HAT_BYTES_LEN]);
 
-impl From<EncapsulationKey> for EncapsulationKeyBytes {
-    fn from(ek: EncapsulationKey) -> Self {
-        Self(ek.to_bytes())
-    }
-}
-
-impl ConditionallySelectable for EncapsulationKeyBytes {
+impl ConditionallySelectable for THatBytes {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
-        Self(<[u8; ENCAPSULATION_KEY_LEN]>::conditional_select(
+        Self(<[u8; T_HAT_BYTES_LEN]>::conditional_select(
             &a.0, &b.0, choice,
         ))
     }
@@ -245,18 +254,32 @@ impl ConditionallySelectable for CiphertextBytes {
     }
 }
 
-// Message from receiver to sender: two values (r_0, r_1) per OT.
-#[derive(Serialize, Deserialize)]
-struct EncapsulationKeysMessage {
-    rs_0: Vec<EncapsulationKeyBytes>,
-    rs_1: Vec<EncapsulationKeyBytes>,
+// One OT's worth of (r_0.t_hat, r_1.t_hat, rho).
+#[derive(Copy, Clone, Serialize, Deserialize)]
+struct EncapsulationKeys {
+    t_hat_0: THatBytes,
+    t_hat_1: THatBytes,
+    #[serde(with = "serde_bytes")]
+    rho: Rho,
 }
 
-// Message from sender to receiver: two ciphertexts per OT.
+// One EncapsulationKeys per OT.
+#[derive(Serialize, Deserialize)]
+struct EncapsulationKeysMessage {
+    keys: Vec<EncapsulationKeys>,
+}
+
+// One OT's worth of (ct_0, ct_1).
+#[derive(Copy, Clone, Serialize, Deserialize)]
+struct Ciphertexts {
+    ct_0: CiphertextBytes,
+    ct_1: CiphertextBytes,
+}
+
+// One Ciphertexts per OT.
 #[derive(Serialize, Deserialize)]
 struct CiphertextsMessage {
-    cts_0: Vec<CiphertextBytes>,
-    cts_1: Vec<CiphertextBytes>,
+    cts: Vec<Ciphertexts>,
 }
 
 pub struct MlKemOt {
@@ -299,44 +322,36 @@ impl RotSender for MlKemOt {
             recv_stream.next().await.ok_or(Error::ClosedStream)??
         };
 
-        if receiver_msg.rs_0.len() != count || receiver_msg.rs_1.len() != count {
+        if receiver_msg.keys.len() != count {
             return Err(Error::InvalidDataCount {
                 expected: count,
-                actual_0: receiver_msg.rs_0.len(),
-                actual_1: receiver_msg.rs_1.len(),
+                actual: receiver_msg.keys.len(),
             });
         }
 
-        let mut cts_0 = Vec::with_capacity(count);
-        let mut cts_1 = Vec::with_capacity(count);
-        for (i, (r_0_bytes, r_1_bytes)) in receiver_msg
-            .rs_0
-            .iter()
-            .zip(receiver_msg.rs_1.iter())
-            .enumerate()
-        {
+        let mut cts = Vec::with_capacity(count);
+        for (i, keys) in receiver_msg.keys.iter().enumerate() {
             // Step 5: Receive (r_0, r_1) from the receiver (done above).
-            let r_0 = EncapsulationKey::from_bytes(&r_0_bytes.0);
-            let r_1 = EncapsulationKey::from_bytes(&r_1_bytes.0);
+            let r_0 = EncapsulationKey::from_parts(&keys.t_hat_0, keys.rho);
+            let r_1 = EncapsulationKey::from_parts(&keys.t_hat_1, keys.rho);
 
             // Step 6: Reconstruct encapsulation keys: ek_j = r_j + hash_ek(r_{1-j}).
             let ek_0 = &r_0 + &hash_ek(&r_1);
             let ek_1 = &r_1 + &hash_ek(&r_0);
 
             // Step 7: Encapsulate to both reconstructed keys.
-            let (ct_0, ss_0) = encapsulate(ek_0.into(), &mut self.rng)?;
-            let (ct_1, ss_1) = encapsulate(ek_1.into(), &mut self.rng)?;
+            let (ct_0, ss_0) = encapsulate(&ek_0, &mut self.rng)?;
+            let (ct_1, ss_1) = encapsulate(&ek_1, &mut self.rng)?;
 
             // Step 8: Derive OT output keys.
             let key_0 = derive_ot_key(&ss_0, i);
             let key_1 = derive_ot_key(&ss_1, i);
 
-            cts_0.push(ct_0);
-            cts_1.push(ct_1);
+            cts.push(Ciphertexts { ct_0, ct_1 });
             ots[i] = [key_0, key_1];
         }
 
-        let sender_msg = CiphertextsMessage { cts_0, cts_1 };
+        let sender_msg = CiphertextsMessage { cts };
         {
             let mut send_stream = send.as_stream();
             send_stream.send(sender_msg).await?;
@@ -362,8 +377,7 @@ impl RotReceiver for MlKemOt {
         let (mut send, mut recv) = self.conn.byte_stream().await?;
 
         let mut decap_keys: Vec<DecapsulationKey<MlKem>> = Vec::with_capacity(count);
-        let mut rs_0 = Vec::with_capacity(count);
-        let mut rs_1 = Vec::with_capacity(count);
+        let mut keys = Vec::with_capacity(count);
 
         for choice in choices.iter() {
             // Step 1: Generate real keypair.
@@ -380,21 +394,24 @@ impl RotReceiver for MlKemOt {
 
             // Step 3: Compute real key: r_b = ek - hash_ek(r_{1-b}).
             let r_b = &ek - &hash_ek(&r_1_b);
-            let r_b_bytes: EncapsulationKeyBytes = r_b.into();
-            let r_1_b_bytes: EncapsulationKeyBytes = r_1_b.into();
+            let r_b_bytes = r_b.t_hat_bytes();
+            let r_1_b_bytes = r_1_b.t_hat_bytes();
 
             // Step 4: Select (r_0, r_1) based on choice bit (constant-time).
             // If b=0: r_0 = real, r_1 = random.
             // If b=1: r_0 = random, r_1 = real.
-            let r_0 = EncapsulationKeyBytes::conditional_select(&r_b_bytes, &r_1_b_bytes, *choice);
-            let r_1 = EncapsulationKeyBytes::conditional_select(&r_1_b_bytes, &r_b_bytes, *choice);
+            let t_hat_0 = THatBytes::conditional_select(&r_b_bytes, &r_1_b_bytes, *choice);
+            let t_hat_1 = THatBytes::conditional_select(&r_1_b_bytes, &r_b_bytes, *choice);
 
             decap_keys.push(dk);
-            rs_0.push(r_0);
-            rs_1.push(r_1);
+            keys.push(EncapsulationKeys {
+                t_hat_0,
+                t_hat_1,
+                rho: ek.rho,
+            });
         }
 
-        let receiver_msg = EncapsulationKeysMessage { rs_0, rs_1 };
+        let receiver_msg = EncapsulationKeysMessage { keys };
         {
             let mut send_stream = send.as_stream();
             send_stream.send(receiver_msg).await?;
@@ -405,22 +422,21 @@ impl RotReceiver for MlKemOt {
             recv_stream.next().await.ok_or(Error::ClosedStream)??
         };
 
-        if sender_msg.cts_0.len() != count || sender_msg.cts_1.len() != count {
+        if sender_msg.cts.len() != count {
             return Err(Error::InvalidDataCount {
                 expected: count,
-                actual_0: sender_msg.cts_0.len(),
-                actual_1: sender_msg.cts_1.len(),
+                actual: sender_msg.cts.len(),
             });
         }
 
         // Step 10-11: Decapsulate the chosen ciphertext and derive OT key.
-        for (i, ((dk, choice), (ct_0, ct_1))) in decap_keys
+        for (i, ((dk, choice), cts)) in decap_keys
             .iter()
             .zip(choices.iter())
-            .zip(sender_msg.cts_0.iter().zip(sender_msg.cts_1.iter()))
+            .zip(sender_msg.cts.iter())
             .enumerate()
         {
-            let ct_b_bytes = CiphertextBytes::conditional_select(ct_0, ct_1, *choice).0;
+            let ct_b_bytes = CiphertextBytes::conditional_select(&cts.ct_0, &cts.ct_1, *choice).0;
             let ct_b: MlKemCiphertext<MlKem> = ct_b_bytes
                 .as_slice()
                 .try_into()
@@ -436,11 +452,11 @@ impl RotReceiver for MlKemOt {
 
 // Encapsulates to the given key, returning the ciphertext and the shared key.
 fn encapsulate(
-    ek: EncapsulationKeyBytes,
+    ek: &EncapsulationKey,
     rng: &mut StdRng,
 ) -> Result<(CiphertextBytes, SharedKey), Error> {
-    let parsed_ek =
-        MlKemEncapsulationKey::<MlKem>::new(&ek.0.into()).map_err(Error::EncapsKeyValidation)?;
+    let parsed_ek = MlKemEncapsulationKey::<MlKem>::new(&ek.to_bytes().into())
+        .map_err(Error::EncapsKeyValidation)?;
     let (ct, ss): (MlKemCiphertext<MlKem>, SharedKey) = parsed_ek.encapsulate_with_rng(rng);
     Ok((
         CiphertextBytes(ct.as_slice().try_into().expect("incorrect ciphertext size")),

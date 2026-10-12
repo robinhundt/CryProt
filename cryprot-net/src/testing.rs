@@ -23,7 +23,22 @@ pub async fn local_conn() -> anyhow::Result<(Connection, Connection)> {
     let limits = Limits::new()
         .with_max_send_buffer_size(12 * MiB as u32)?
         .with_max_open_local_unidirectional_streams(max_streams)?
-        .with_max_open_remote_unidirectional_streams(max_streams)?;
+        .with_max_open_remote_unidirectional_streams(max_streams)?
+        // Both endpoints of a test connection live on the same current-thread
+        // tokio runtime as the protocol future. When the test suite runs in
+        // parallel, the protocols offload heavy AES/PPRF work to a shared global
+        // rayon pool which saturates all cores. The runtime thread driving the
+        // QUIC IO can then be descheduled for seconds at a time, during which no
+        // packets flow. With the default 30s idle timeout this intermittently
+        // tripped `IdleTimerExpired`, tearing down a perfectly healthy loopback
+        // connection mid-protocol (only observed under parallel execution, hence
+        // the previous macOS `--test-threads=1` CI workaround). A generous idle
+        // timeout tolerates these scheduling gaps, and keep-alive (enabled in
+        // `Connection::new`) refreshes the timer whenever the runtime is idle
+        // between compute phases. The keep-alive period must stay below the idle
+        // timeout to have any effect.
+        .with_max_idle_timeout(std::time::Duration::from_secs(300))?
+        .with_max_keep_alive_period(std::time::Duration::from_secs(15))?;
 
     let addr = "127.0.0.1:0".parse()?;
     let io = || {
